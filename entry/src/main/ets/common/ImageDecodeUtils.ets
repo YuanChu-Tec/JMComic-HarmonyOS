@@ -45,9 +45,8 @@ export class ImageDecodeUtils {
    * 通过重新排列水平条带还原原始图片
    * 对应 QT: ToolUtil.SegmentationPicture() — tool.py:903-943
    *
-   * 算法：
-   * 1. 将图片从上到下分成 num 个 block，每个高 copyHeight，最后一个额外加 remainder
-   * 2. 倒序遍历 block，依次粘贴到目标图片从 y=0 开始
+   * 使用 readPixelsToBuffer + writeBufferToPixels 在同格式 PixelMap 之间操作，
+   * 字节顺序由框架自动保持一致，无需手动处理通道转换。
    *
    * @param pixelMap 原始加密图片的 PixelMap
    * @param num 分割数
@@ -61,36 +60,22 @@ export class ImageDecodeUtils {
     let imageInfo: image.ImageInfo = await pixelMap.getImageInfo();
     let w: number = imageInfo.size.width;
     let h: number = imageInfo.size.height;
-    let srcAlphaType: image.AlphaType = imageInfo.alphaType;
-
-    // 读取原始像素数据（字节顺序与 pixelFormat 一致）
-    let readBuffer: ArrayBuffer = new ArrayBuffer(w * h * 4);
-    await pixelMap.readPixelsToBuffer(readBuffer);
-    let srcPixels: Uint8ClampedArray = new Uint8ClampedArray(readBuffer);
 
     console.info(`[ImageDecode] format=${imageInfo.pixelFormat}, alphaType=${imageInfo.alphaType}, size=${w}x${h}, num=${num}`);
-
-    // 如果源格式是 BGRA_8888，交换 R/B 通道转为 RGBA
-    // readPixelsToBuffer 输出 BGRA 字节 [B,G,R,A]，
-    // 但 createPixelMapSync 按 RGBA 解释，导致颜色偏蓝
-    let isBGRA = (imageInfo.pixelFormat as number) === 4; // BGRA_8888 = 4
-    if (isBGRA) {
-      for (let p = 0; p < srcPixels.length; p += 4) {
-        let bVal = srcPixels[p];
-        srcPixels[p] = srcPixels[p + 2]; // R -> pos 0
-        srcPixels[p + 2] = bVal;          // B -> pos 2
-      }
-      console.info('[ImageDecode] converted BGRA -> RGBA');
-    }
-
-    // 创建目标像素数组
-    let dstPixels: Uint8ClampedArray = new Uint8ClampedArray(w * h * 4);
 
     let rem: number = h % num;
     let copyHeight: number = Math.floor(h / num);
     let rowBytes: number = w * 4;
 
-    // 1. 计算 block 列表: [(start, end), ...]
+    // 1. 读取全部像素（字节顺序由 PixelMap 内部格式决定）
+    let srcBuffer: ArrayBuffer = new ArrayBuffer(w * h * 4);
+    await pixelMap.readPixelsToBuffer(srcBuffer);
+    let srcArr: Uint8Array = new Uint8Array(srcBuffer);
+
+    // 2. 创建重排后的像素缓冲区
+    let dstArr: Uint8Array = new Uint8Array(w * h * 4);
+
+    // 3. 计算 block 列表: [(startRow, endRow), ...]
     let blockStart: number[] = [];
     let blockEnd: number[] = [];
     let totalH: number = 0;
@@ -104,37 +89,34 @@ export class ImageDecodeUtils {
       totalH = bh;
     }
 
-    // 2. 倒序遍历 block，依次粘贴到目标
+    // 4. 倒序遍历 block，按条带拷贝到目标
     let dstY: number = 0;
     for (let i = num - 1; i >= 0; i--) {
       let start: number = blockStart[i];
       let end: number = blockEnd[i];
       let coH: number = end - start;
-      let srcOffset: number = start * rowBytes;
-      let dstOffset: number = dstY * rowBytes;
+      let srcOff: number = start * rowBytes;
+      let dstOff: number = dstY * rowBytes;
       let stripSize: number = coH * rowBytes;
 
-      dstPixels.set(
-        srcPixels.slice(srcOffset, srcOffset + stripSize),
-        dstOffset
-      );
+      dstArr.set(srcArr.slice(srcOff, srcOff + stripSize), dstOff);
       dstY += coH;
     }
 
-    // 输出始终为 RGBA_8888
-    let arrayBuffer: ArrayBuffer = dstPixels.buffer.slice(
-      dstPixels.byteOffset,
-      dstPixels.byteOffset + dstPixels.byteLength
-    );
-
-    let opts: image.InitializationOptions = {
+    // 5. 创建同格式目标 PixelMap 并写入重排后的像素
+    //    readPixelsToBuffer 与 writeBufferToPixels 在相同格式的 PixelMap 上
+    //    使用一致的字节顺序，无需手动处理 BGRA/RGBA 通道
+    let blankBuffer: ArrayBuffer = new ArrayBuffer(w * h * 4);
+    let initOpts: image.InitializationOptions = {
       editable: true,
-      pixelFormat: image.PixelMapFormat.RGBA_8888,
+      pixelFormat: imageInfo.pixelFormat,
       size: { width: w, height: h },
-      alphaType: srcAlphaType
+      alphaType: imageInfo.alphaType
     };
+    let target: image.PixelMap = image.createPixelMapSync(blankBuffer, initOpts);
+    await target.writeBufferToPixels(dstArr.buffer.slice(dstArr.byteOffset, dstArr.byteOffset + dstArr.byteLength));
 
-    return image.createPixelMapSync(arrayBuffer, opts);
+    return target;
   }
 
   /**
