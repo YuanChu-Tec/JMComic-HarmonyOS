@@ -1,0 +1,11 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/SearchPage",
+    "pages/AlbumDetailPage",
+    "pages/ImageViewerPage",
+    "pages/FavoritePage",
+    "pages/LoginPage",
+    "pages/DownloadPage"
+  ]
+}
