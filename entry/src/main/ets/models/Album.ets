@@ -79,7 +79,7 @@ export interface JmAlbumDetail {
   series_id: string;
   comment_total: string;
   tags: string[];             // API 返回字符串数组
-  works: JmRelatedWork[];    // 相关作品 [{id, name, author, image}, ...]
+  works: string[];            // 所属作品/IP（如"原神"、"崩坏3"），纯字符串数组
   actors?: string[];
   related_list?: JmRelatedWork[];
   liked?: boolean;

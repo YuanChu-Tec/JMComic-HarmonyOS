@@ -1,4 +1,4 @@
-import { router } from '@kit.ArkUI';
+import { router, display } from '@kit.ArkUI';
 import { ApiService } from '../network/ApiService';
 import { AlbumViewModel, JmAlbumInfo, IAlbumViewModelJSON } from '../models/Album';
 import { CacheManager } from '../common/CacheManager';
@@ -17,6 +17,7 @@ struct SearchPage {
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private apiService: ApiService = new ApiService();
   private cache: CacheManager | null = null;
+  private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
 
   async aboutToAppear(): Promise<void> {
     this.cache = await CacheManager.getInstance();
@@ -134,12 +135,169 @@ struct SearchPage {
   }
 
   onBack(): void {
-    router.back();
+    if (this.hasSearched) {
+      this.hasSearched = false;
+      this.albums = [];
+      this.currentPage = 1;
+      this.hasMore = false;
+    } else {
+      router.back();
+    }
+  }
+
+  onBackPress(): boolean {
+    if (this.hasSearched) {
+      this.onBack();
+      return true;
+    }
+    return false;
   }
 
   build() {
-    Column() {
-      // ── 搜索栏 ──
+    Stack() {
+      // ── 内容区域（延伸到搜索栏背后） ──
+      Column() {
+        // ── 结果区域 ──
+        if (this.isLoading && this.albums.length === 0) {
+          Column() {
+            LoadingProgress()
+              .width(40)
+              .height(40)
+              .color('#FF5A5F')
+            Text('搜索中...')
+              .fontSize(14)
+              .fontColor('#999999')
+              .margin({ top: 12 })
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+        } else if (this.hasSearched && this.albums.length === 0) {
+          Column() {
+            Image($r('sys.symbol.magnifyingglass'))
+              .width(48)
+              .height(48)
+              .fillColor('#CCCCCC')
+            Text('未找到相关漫画')
+              .fontSize(16)
+              .fontColor('#999999')
+              .margin({ top: 12 })
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+        } else if (!this.hasSearched) {
+          Column() {
+            if (this.searchHistory.length > 0) {
+              // 搜索历史
+              Column() {
+                Row() {
+                  Text('搜索历史')
+                    .fontSize(14)
+                    .fontWeight(FontWeight.Medium)
+                    .fontColor('#333333')
+                    .layoutWeight(1)
+
+                  Text('清空')
+                    .fontSize(13)
+                    .fontColor('#999999')
+                    .onClick(() => {
+                      if (this.cache) {
+                        this.cache.clearSearchHistory();
+                        this.searchHistory = [];
+                      }
+                    })
+                }
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 16, bottom: 8 })
+
+                Flex({ wrap: FlexWrap.Wrap }) {
+                  ForEach(this.searchHistory, (item: string) => {
+                    Text(item)
+                      .fontSize(13)
+                      .fontColor('#666666')
+                      .padding({ left: 14, right: 14, top: 7, bottom: 7 })
+                      .backgroundColor('#F5F5F5')
+                      .borderRadius(16)
+                      .margin({ right: 8, bottom: 8 })
+                      .onClick(() => {
+                        this.keyword = item;
+                        this.doSearch();
+                      })
+                  }, (item: string) => item)
+                }
+                .padding({ left: 16, right: 16 })
+              }
+              .width('100%')
+              .alignItems(HorizontalAlign.Start)
+            } else {
+              Image($r('sys.symbol.magnifyingglass'))
+                .width(48)
+                .height(48)
+                .fillColor('#DDDDDD')
+              Text('输入关键词搜索漫画')
+                .fontSize(15)
+                .fontColor('#BBBBBB')
+                .margin({ top: 12 })
+            }
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Start)
+          .padding({ top: this.topSafeHeight + 56 })
+        } else {
+          Scroll() {
+            Column() {
+              Grid() {
+                ForEach(this.albums, (album: AlbumViewModel) => {
+                  GridItem() {
+                    this.AlbumCard(album)
+                  }
+                  .onClick(() => this.onAlbumClick(album))
+                })
+              }
+              .columnsTemplate(this.isTablet ? '1fr 1fr 1fr 1fr' : '1fr 1fr')
+              .columnsGap(10)
+              .rowsGap(10)
+              .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+
+              if (this.isLoading) {
+                Row() {
+                  LoadingProgress()
+                    .width(24)
+                    .height(24)
+                    .color('#FF5A5F')
+                  Text('加载更多...')
+                    .fontSize(13)
+                    .fontColor('#999999')
+                    .margin({ left: 8 })
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.Center)
+                .padding({ top: 16, bottom: 16 })
+              } else if (!this.hasMore) {
+                Text('没有更多了')
+                  .fontSize(13)
+                  .fontColor('#CCCCCC')
+                  .width('100%')
+                  .textAlign(TextAlign.Center)
+                  .padding({ top: 16, bottom: 16 })
+              }
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .height('100%')
+          .scrollBar(BarState.Off)
+          .padding({ top: this.topSafeHeight + 56 })
+          .onReachEnd(() => this.loadMore())
+        }
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#FFFFFF')
+
+      // ── 搜索栏（浮层 + 毛玻璃） ──
       Row() {
         Image($r('sys.symbol.chevron_left'))
           .width(24)
@@ -147,7 +305,7 @@ struct SearchPage {
           .fillColor('#333333')
           .onClick(() => this.onBack())
 
-        TextInput({ placeholder: '输入关键词搜索...' })
+        TextInput({ placeholder: '输入关键词搜索...', text: this.keyword })
           .layoutWeight(1)
           .height(40)
           .fontSize(15)
@@ -168,133 +326,12 @@ struct SearchPage {
           .fontWeight(FontWeight.Medium)
           .onClick(() => this.doSearch())
       }
+      .position({ x: 0, y: 0 })
       .width('100%')
-      .height(56 + this.topSafeHeight)
-      .padding({ left: 12, right: 16, top: this.topSafeHeight })
-      .backgroundColor('#FFFFFF')
-
-      Divider().height(1).color('#F0F0F0')
-
-      // ── 结果区域 ──
-      if (this.isLoading && this.albums.length === 0) {
-        Column() {
-          LoadingProgress()
-            .width(40)
-            .height(40)
-            .color('#FF5A5F')
-          Text('搜索中...')
-            .fontSize(14)
-            .fontColor('#999999')
-            .margin({ top: 12 })
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else if (this.hasSearched && this.albums.length === 0) {
-        Column() {
-          Image($r('sys.symbol.magnifyingglass'))
-            .width(48)
-            .height(48)
-            .fillColor('#CCCCCC')
-          Text('未找到相关漫画')
-            .fontSize(16)
-            .fontColor('#999999')
-            .margin({ top: 12 })
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else if (!this.hasSearched) {
-        Column() {
-          if (this.searchHistory.length > 0) {
-            // 搜索历史
-            Column() {
-              Row() {
-                Text('搜索历史')
-                  .fontSize(14)
-                  .fontWeight(FontWeight.Medium)
-                  .fontColor('#333333')
-                  .layoutWeight(1)
-
-                Text('清空')
-                  .fontSize(13)
-                  .fontColor('#999999')
-                  .onClick(() => {
-                    if (this.cache) {
-                      this.cache.clearSearchHistory();
-                      this.searchHistory = [];
-                    }
-                  })
-              }
-              .width('100%')
-              .padding({ left: 16, right: 16, top: 16, bottom: 8 })
-
-              Flex({ wrap: FlexWrap.Wrap }) {
-                ForEach(this.searchHistory, (item: string) => {
-                  Text(item)
-                    .fontSize(13)
-                    .fontColor('#666666')
-                    .padding({ left: 14, right: 14, top: 7, bottom: 7 })
-                    .backgroundColor('#F5F5F5')
-                    .borderRadius(16)
-                    .margin({ right: 8, bottom: 8 })
-                    .onClick(() => {
-                      this.keyword = item;
-                      this.doSearch();
-                    })
-                }, (item: string) => item)
-              }
-              .padding({ left: 16, right: 16 })
-            }
-            .width('100%')
-            .alignItems(HorizontalAlign.Start)
-          } else {
-            Image($r('sys.symbol.magnifyingglass'))
-              .width(48)
-              .height(48)
-              .fillColor('#DDDDDD')
-            Text('输入关键词搜索漫画')
-              .fontSize(15)
-              .fontColor('#BBBBBB')
-              .margin({ top: 12 })
-          }
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Start)
-        .padding({ top: 8 })
-      } else {
-        List() {
-          ForEach(this.albums, (album: AlbumViewModel) => {
-            ListItem() {
-              this.SearchResultItem(album)
-            }
-            .onClick(() => this.onAlbumClick(album))
-          })
-
-          if (this.isLoading) {
-            ListItem() {
-              Row() {
-                LoadingProgress()
-                  .width(24)
-                  .height(24)
-                  .color('#FF5A5F')
-                Text('加载更多...')
-                  .fontSize(13)
-                  .fontColor('#999999')
-                  .margin({ left: 8 })
-              }
-              .width('100%')
-              .height(50)
-              .justifyContent(FlexAlign.Center)
-            }
-          }
-        }
-        .layoutWeight(1)
-        .divider({ strokeWidth: 0.5, color: '#F5F5F5' })
-        .onReachEnd(() => this.loadMore())
-        .scrollBar(BarState.Off)
-      }
+      .padding({ left: 12, right: 16, top: this.topSafeHeight + 8, bottom: 4 })
+      .backgroundColor('rgba(255, 255, 255, 0.85)')
+      .backdropBlur(20)
+      .zIndex(10)
     }
     .width('100%')
     .height('100%')
@@ -302,54 +339,57 @@ struct SearchPage {
   }
 
   @Builder
-  SearchResultItem(album: AlbumViewModel) {
-    Row() {
+  AlbumCard(album: AlbumViewModel) {
+    Column() {
+      // 封面图
       Image(album.coverUrl)
-        .width(80)
-        .height(110)
+        .width('100%')
+        .aspectRatio(0.72)
         .objectFit(ImageFit.Cover)
-        .borderRadius(6)
+        .borderRadius({ topLeft: 8, topRight: 8 })
         .backgroundColor('#F0F0F0')
 
+      // 信息区
       Column() {
         Text(album.name)
-          .fontSize(16)
+          .fontSize(14)
           .fontWeight(FontWeight.Medium)
           .fontColor('#333333')
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .lineHeight(22)
-
-        Text(album.author)
-          .fontSize(13)
-          .fontColor('#999999')
-          .margin({ top: 6 })
-
-        Blank()
+          .lineHeight(18)
+          .constraintSize({ minHeight: 36 })
+          .align(Alignment.Top)
 
         Row() {
-          Text(album.category)
+          Text(album.author)
             .fontSize(11)
-            .fontColor('#FF5A5F')
-            .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-            .backgroundColor('#FFF0F0')
-            .borderRadius(4)
+            .fontColor('#999999')
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-          Blank()
-
-          Text(`${album.totalViews} 次观看`)
-            .fontSize(11)
-            .fontColor('#BBBBBB')
+          if (album.totalViews && album.totalViews !== '0') {
+            Text(`${album.totalViews} 次`)
+              .fontSize(10)
+              .fontColor('#CCCCCC')
+          }
         }
         .width('100%')
+        .margin({ top: 4 })
       }
-      .layoutWeight(1)
-      .height(110)
-      .margin({ left: 12 })
+      .width('100%')
+      .padding({ left: 8, right: 8, top: 6, bottom: 8 })
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
     .backgroundColor('#FFFFFF')
+    .borderRadius(8)
+    .shadow({
+      radius: 4,
+      color: '#10000000',
+      offsetX: 0,
+      offsetY: 2
+    })
   }
 }

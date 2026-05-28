@@ -543,6 +543,8 @@ struct CategoryPage {
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .lineHeight(18)
+          .constraintSize({ minHeight: 36 })
+          .align(Alignment.Top)
 
         Row() {
           Text(album.author)

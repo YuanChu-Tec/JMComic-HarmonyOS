@@ -167,31 +167,6 @@ struct AlbumDetailPage {
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .lineHeight(24)
 
-                Flex({ wrap: FlexWrap.Wrap }) {
-                  Text('作者: ')
-                    .fontSize(14)
-                    .fontColor('#666666')
-                  ForEach(this.parseAuthorList(this.album?.author ?? ''), (name: string, idx: number) => {
-                    Text(name)
-                      .fontSize(14)
-                      .fontColor('#4A90D9')
-                      .onClick(() => {
-                        if (name) {
-                          router.pushUrl({
-                            url: 'pages/SearchPage',
-                            params: { keyword: name }
-                          });
-                        }
-                      })
-                    if (idx < (this.parseAuthorList(this.album?.author ?? '').length - 1)) {
-                      Text(', ')
-                        .fontSize(14)
-                        .fontColor('#666666')
-                    }
-                  }, (name: string, idx: number) => `${name}_${idx}`)
-                }
-                .margin({ top: 8 })
-
                 Row() {
                   if (this.album.category && typeof this.album.category === 'object') {
                     Text((this.album.category as CategoryBean).title || '')
@@ -228,6 +203,13 @@ struct AlbumDetailPage {
                 }
                 .width('100%')
                 .margin({ top: 8 })
+
+                Text('禁漫车')
+                  .fontSize(14)
+                  .fontColor('#999999')
+                Text(`JM${this.album.id}`)
+                  .fontSize(14)
+                  .fontColor('#666666')
               }
               .layoutWeight(1)
               .height(165)
@@ -284,23 +266,112 @@ struct AlbumDetailPage {
               .padding({ left: 16, right: 16, bottom: 4 })
             }
 
-            // 系列信息
-            if (this.album.series && this.album.series.length > 0) {
-                Row() {
-                Text('系列:')
-                  .fontSize(13)
-                  .fontColor('#999999')
-                  .margin({ right: 8 })
+            // 作者
+            if (this.parseAuthorList(this.album?.author ?? '').length > 0) {
+              Column() {
+                Text('作者')
+                  .fontSize(15)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#333333')
+                  .width('100%')
+                  .margin({ bottom: 6 })
 
-                ForEach(this.album.series, (s: SeriesItem) => {
-                  Text(s.name)
-                    .fontSize(13)
-                    .fontColor('#FF5A5F')
-                    .margin({ right: 8 })
-                })
+                Flex({ wrap: FlexWrap.Wrap }) {
+                  ForEach(this.parseAuthorList(this.album?.author ?? ''), (name: string) => {
+                    Text(name)
+                      .fontSize(12)
+                      .fontColor('#FF5A5F')
+                      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                      .backgroundColor('#FFF5F5')
+                      .borderRadius(4)
+                      .border({ width: 0.5, color: '#FFD4D4' })
+                      .margin({ right: 8, bottom: 8 })
+                      .onClick(() => {
+                        if (name) {
+                          router.pushUrl({
+                            url: 'pages/SearchPage',
+                            params: { keyword: name }
+                          });
+                        }
+                      })
+                  }, (name: string) => name)
+                }
               }
               .width('100%')
-              .padding({ left: 16, right: 16, bottom: 8 })
+              .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+              .alignItems(HorizontalAlign.Start)
+            }
+
+            // 登场人物
+            if (this.album.actors && this.album.actors.length > 0) {
+              Column() {
+                Text('登场人物')
+                  .fontSize(15)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#333333')
+                  .width('100%')
+                  .margin({ bottom: 6 })
+
+                Flex({ wrap: FlexWrap.Wrap }) {
+                  ForEach(this.album.actors, (actor: string) => {
+                    Text(actor)
+                      .fontSize(12)
+                      .fontColor('#FF5A5F')
+                      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                      .backgroundColor('#FFF5F5')
+                      .borderRadius(4)
+                      .border({ width: 0.5, color: '#FFD4D4' })
+                      .margin({ right: 8, bottom: 8 })
+                      .onClick(() => {
+                        if (actor) {
+                          router.pushUrl({
+                            url: 'pages/SearchPage',
+                            params: { keyword: actor }
+                          });
+                        }
+                      })
+                  }, (actor: string) => actor)
+                }
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+              .alignItems(HorizontalAlign.Start)
+            }
+
+            // 作品（该漫画所属的作品/IP）
+            if (this.album.works && this.album.works.length > 0) {
+              Column() {
+                Text('作品')
+                  .fontSize(15)
+                  .fontWeight(FontWeight.Medium)
+                  .fontColor('#333333')
+                  .width('100%')
+                  .margin({ bottom: 6 })
+
+                Flex({ wrap: FlexWrap.Wrap }) {
+                  ForEach(this.album.works, (work: string) => {
+                    Text(work)
+                      .fontSize(12)
+                      .fontColor('#FF5A5F')
+                      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                      .backgroundColor('#FFF5F5')
+                      .borderRadius(4)
+                      .border({ width: 0.5, color: '#FFD4D4' })
+                      .margin({ right: 8, bottom: 8 })
+                      .onClick(() => {
+                        if (work) {
+                          router.pushUrl({
+                            url: 'pages/SearchPage',
+                            params: { keyword: work }
+                          });
+                        }
+                      })
+                  }, (work: string) => work)
+                }
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+              .alignItems(HorizontalAlign.Start)
             }
 
             // ── 开始阅读 + 评论 按钮 ──
