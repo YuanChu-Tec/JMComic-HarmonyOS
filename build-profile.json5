@@ -5,13 +5,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "certpath": "C:\\Users\\28483\\.ohos\\config\\default_JMComic_YWPxfgpYttwYWW_cvP5Upp6zE5vLo6FkHCTMPh7GFwk=.cer",
+          "certpath": "C:\\Users\\lijiaqi\\.ohos\\config\\default_JMComic-HarmonyOS_Lxsu38wn-4k5e5EmmO9Jswm6uNhs4XEJPr-24mVf_-Q=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001BDD0C85C1ECE3E452865CDFD055D1472BAF0A9B8FDDA8A97663E3597ED3DB4B653EA591A6EECA02",
-          "profile": "C:\\Users\\28483\\.ohos\\config\\default_JMComic_YWPxfgpYttwYWW_cvP5Upp6zE5vLo6FkHCTMPh7GFwk=.p7b",
+          "keyPassword": "0000001B32F825D770FF94A5A4798AD1DF3A4669669AA71482C1F4B21C3EE4F971BB6A1AC555DA0E960349",
+          "profile": "C:\\Users\\lijiaqi\\.ohos\\config\\default_JMComic-HarmonyOS_Lxsu38wn-4k5e5EmmO9Jswm6uNhs4XEJPr-24mVf_-Q=.p7b",
           "signAlg": "SHA256withECDSA",
-          "storeFile": "C:\\Users\\28483\\.ohos\\config\\default_JMComic_YWPxfgpYttwYWW_cvP5Upp6zE5vLo6FkHCTMPh7GFwk=.p12",
-          "storePassword": "0000001BAB99E475AA5F294A80A6B04A8096F20F295FA80943E4C5E894ACF4E1C2807C598BE298AEC3BFD2"
+          "storeFile": "C:\\Users\\lijiaqi\\.ohos\\config\\default_JMComic-HarmonyOS_Lxsu38wn-4k5e5EmmO9Jswm6uNhs4XEJPr-24mVf_-Q=.p12",
+          "storePassword": "0000001BB35DBC05BA6A96ED7CAD9751D8676A9583121D1E2DD221C9A33AD04E2C882EB36B25BC304ADF86"
         }
       }
     ],
@@ -51,6 +51,10 @@
           ]
         }
       ]
+    },
+    {
+      "name": "common",
+      "srcPath": "./common",
     }
   ]
 }
