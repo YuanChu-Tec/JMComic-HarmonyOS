@@ -29,6 +29,7 @@ import {
   JmApiResponse,
   JmAlbumDetail,
   JmPromoteSection,
+  JmAlbumInfo,
   SearchResultData,
   AlbumDetailData,
   PictureData,
@@ -313,6 +314,20 @@ export class ApiService {
 
     let respStr = await this.requestApi(path, 'GET', null, headers);
     return await this.decryptResponse<JmPromoteSection[]>(respStr, ts);
+  }
+
+  /**
+   * 获取最新上传列表
+   * 对应 QT: GetLatestInfoReq2 — GET /latest?page=0
+   */
+  async getLatest(page: number = 0): Promise<JmApiResponse<JmAlbumInfo[]>> {
+    let ts = CryptoUtils.timestamp();
+    let headers = await this.buildTokenHeaders(ts);
+
+    let path = `/latest?page=${page}`;
+
+    let respStr = await this.requestApi(path, 'GET', null, headers);
+    return await this.decryptResponse<JmAlbumInfo[]>(respStr, ts);
   }
 
   /**

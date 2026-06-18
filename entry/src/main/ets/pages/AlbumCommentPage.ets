@@ -140,18 +140,6 @@ struct AlbumCommentPage {
   build() {
     Stack() {
       Column() {
-        // ── 评论总数 ──
-        Row() {
-          Text(`${this.totalComments} 条评论`)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#333333')
-        }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-        .backgroundColor('#FFFFFF')
-
-        // ── 评论列表 ──
         if (this.isLoading) {
           Column() {
             LoadingProgress()
@@ -183,6 +171,7 @@ struct AlbumCommentPage {
                   comment: comment,
                   index: index + 1,
                   onSendReply: this.handleSendReply,
+                  linkClickable: false,  // 评论页关联漫画不可点击
                 })
                   .margin({ top: 8, left: 12, right: 12 })
               }, (comment: CommentInfo) => comment.id)
@@ -249,13 +238,13 @@ struct AlbumCommentPage {
             .onClick(() => this.onSendComment())
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+        .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 8 })
         .backgroundColor('#FFFFFF')
         .border({ width: { top: 0.5 }, color: '#F0F0F0' })
       }
       .width('100%')
       .height('100%')
-      .padding({ top: this.topSafeHeight + 48, bottom: this.bottomSafeHeight })
+      .padding({ top: this.topSafeHeight })
       .backgroundColor('#F5F5F5')
 
       // ── 顶部导航栏 ──
@@ -265,14 +254,22 @@ struct AlbumCommentPage {
           .fontColor(['#333333'])
           .onClick(() => this.onBack())
 
-        Text(this.albumName)
-          .fontSize(17)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#333333')
-          .layoutWeight(1)
-          .textAlign(TextAlign.Center)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Column() {
+          Text(this.albumName)
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor('#333333')
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+          Text(`${this.totalComments} 条评论`)
+            .fontSize(11)
+            .fontColor('#999999')
+            .margin({ top: 1 })
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        .margin({ left: 8 })
 
         // 占位保持对称
         SymbolGlyph($r('sys.symbol.chevron_left'))

@@ -36,6 +36,7 @@ interface ForumModeItem {
 @Component
 struct HomePage {
   @State sections: JmPromoteSection[] = [];
+  @State latestAlbums: JmAlbumInfo[] = [];
   @State isLoading: boolean = true;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   private apiService: ApiService = ApiService.getInstance();
@@ -43,12 +44,20 @@ struct HomePage {
 
   async aboutToAppear(): Promise<void> {
     try {
-      let resp = await this.apiService.getPromote();
-      if (resp.code === 200 && resp.data) {
-        this.sections = resp.data as JmPromoteSection[];
+      let results = await Promise.all([
+        this.apiService.getPromote(),
+        this.apiService.getLatest()
+      ]);
+      let promoteResp = results[0];
+      let latestResp = results[1];
+      if (promoteResp.code === 200 && promoteResp.data) {
+        this.sections = promoteResp.data as JmPromoteSection[];
+      }
+      if (latestResp.code === 200 && latestResp.data) {
+        this.latestAlbums = latestResp.data as JmAlbumInfo[];
       }
     } catch (err) {
-      console.error('[HomePage] getPromote error:', JSON.stringify(err));
+      console.error('[HomePage] load error:', JSON.stringify(err));
     } finally {
       this.isLoading = false;
     }
@@ -79,7 +88,7 @@ struct HomePage {
           .width('100%')
           .height(300)
           .justifyContent(FlexAlign.Center)
-        } else if (this.sections.length === 0) {
+        } else if (this.sections.length === 0 && this.latestAlbums.length === 0) {
           Column() {
             Text('暂无数据')
               .fontSize(16)
@@ -89,6 +98,35 @@ struct HomePage {
           .height(300)
           .justifyContent(FlexAlign.Center)
         } else {
+          // ── 最新上传分区（始终最前） ──
+          if (this.latestAlbums.length > 0) {
+            Column() {
+              Row() {
+                Text('最新上传')
+                  .fontSize(17)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor('#333333')
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 16, bottom: 10 })
+
+              Scroll() {
+                Row({ space: 10 }) {
+                  ForEach(this.latestAlbums, (album: JmAlbumInfo) => {
+                    this.HomeAlbumCard(album)
+                  }, (album: JmAlbumInfo, index?: number) => {
+                    return `${typeof album.id === 'number' ? album.id : album.id}`
+                  })
+                }
+                .padding({ left: 16, right: 16 })
+              }
+              .scrollable(ScrollDirection.Horizontal)
+              .scrollBar(BarState.Off)
+              .width('100%')
+            }
+          }
+
+          // ── 推广分区 ──
           ForEach(this.sections, (section: JmPromoteSection) => {
             Column() {
               // 分区标题
@@ -440,7 +478,10 @@ struct ProfilePage {
           .width('100%')
           .margin({ top: 12 })
           .onAppear(() => {
-            if (this.isLoggedIn && this.favAlbums.length === 0 && !this.favNeedLoad) {
+            if (this.isLoggedIn) {
+              this.favCurrentPage = 1;
+              this.favHasMore = true;
+              this.favAlbums = [];
               this.favNeedLoad = true;
               this.loadFavorites();
             }
@@ -731,6 +772,12 @@ struct CategoryPage {
     });
   }
 
+  onMoreCategory(): void {
+    router.pushUrl({
+      url: 'pages/SearchPage'
+    });
+  }
+
   onFavorites(): void {
     router.pushUrl({
       url: 'pages/FavoritePage'
@@ -823,6 +870,15 @@ struct CategoryPage {
                 .margin({ right: 8 })
                 .onClick(() => this.onCategoryChange(cat))
             })
+
+            // 查看更多
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(18)
+              .fontColor(['#666666'])
+              .padding({ left: 10, right: 10, top: 7, bottom: 7 })
+              .backgroundColor('#F5F5F5')
+              .borderRadius(16)
+              .onClick(() => this.onMoreCategory())
           }
           .padding({ left: 16, right: 16, top: 0, bottom: 8 })
         }

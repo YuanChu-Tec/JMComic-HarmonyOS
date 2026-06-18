@@ -111,7 +111,7 @@ export const CATEGORY_SUB_MAP: Record<string, string> = {
 
 // 分类中文名
 export const CATEGORY_NAME_MAP: Record<string, string> = {
-  '0': '全部',
+  '0': '最新',
   'doujin': '同人',
   'single': '单本',
   'short': '短篇',

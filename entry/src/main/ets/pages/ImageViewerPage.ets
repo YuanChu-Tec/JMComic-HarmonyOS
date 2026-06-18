@@ -82,6 +82,9 @@ struct ImageViewerPage {
   private decodingInFlight: boolean[] = [];
   private chapterGeneration: number = 0;
   private imageDataSource: ImageDataSource = new ImageDataSource();
+  // 后台持续加载相关
+  private backgroundLoaderActive: boolean = false;
+  private nextLoadIndex: number = 0;       // 下一个要加载的索引
 
   aboutToAppear(): void {
     let params = router.getParams() as RouterParams;
@@ -154,8 +157,11 @@ struct ImageViewerPage {
         }
         this.decodedPixelMaps = arr;
         this.decodingInFlight = flight;
-        // 预解码第一张
-        this.decodeImageAtIndex(0);
+        // 重置后台加载器状态
+        this.nextLoadIndex = 0;
+        this.backgroundLoaderActive = true;
+        // 启动后台持续加载
+        this.startBackgroundLoader();
       }
     } catch (err) {
       let errMsg = err instanceof Error ? err.message : JSON.stringify(err);
@@ -194,6 +200,7 @@ struct ImageViewerPage {
 
   private switchToChapter(chapter: ChapterInfo, index: number): void {
     this.chapterGeneration++;  // 作废旧解码任务
+    this.backgroundLoaderActive = false;  // 停止后台加载
     this.photoId = chapter.photoId;
     this.titleText = chapter.photoName || '';
     this.currentChapterIndex = index;
@@ -295,6 +302,53 @@ struct ImageViewerPage {
       console.error(`[ImageViewer] decode error at index ${index}: ${JSON.stringify(err)}`);
     } finally {
       this.decodingInFlight[index] = false;
+      // 触发后台继续加载下一张
+      this.continueBackgroundLoading();
+    }
+  }
+
+  /**
+   * 启动后台持续加载器
+   */
+  private startBackgroundLoader(): void {
+    if (!this.backgroundLoaderActive) {
+      return;
+    }
+    console.info(`[ImageViewer] background loader started, total=${this.totalImages}`);
+    // 不限制并发，同时启动所有图片的加载
+    while (this.nextLoadIndex < this.totalImages) {
+      this.loadNextImage();
+    }
+  }
+
+  /**
+   * 加载下一个未加载的图片
+   */
+  private loadNextImage(): void {
+    if (!this.backgroundLoaderActive) {
+      return;
+    }
+    // 找到下一个未加载的图片
+    while (this.nextLoadIndex < this.totalImages) {
+      let index = this.nextLoadIndex;
+      this.nextLoadIndex++;
+      if (!this.decodedPixelMaps[index] && !this.decodingInFlight[index]) {
+        // 异步加载，不等待
+        this.decodeImageAtIndex(index);
+        return;
+      }
+    }
+    // 所有图片已加载完成
+    this.backgroundLoaderActive = false;
+    console.info('[ImageViewer] background loader finished');
+  }
+
+  /**
+   * 当前图片加载完成后，继续加载下一张
+   */
+  private continueBackgroundLoading(): void {
+    if (this.backgroundLoaderActive) {
+      this.loadNextImage();
     }
   }
 
@@ -351,16 +405,12 @@ struct ImageViewerPage {
                 Image(this.decodedPixelMaps[index])
                   .width('100%')
                   .objectFit(ImageFit.Contain)
+                  .backgroundColor('#FFFFFF')
               } else {
-                Column() {
-                  Image($r('app.media.loading'))
-                    .width('100%')
-                    .height('100%')
-                    .objectFit(ImageFit.Contain)
-                }
-                .width('100%')
-                .justifyContent(FlexAlign.Center)
-                .backgroundColor('#FFFFFF')
+                Image($r('app.media.loading'))
+                  .width('100%')
+                  .objectFit(ImageFit.Contain)
+                  .backgroundColor('#FFFFFF')
               }
             }
             .width('100%')
