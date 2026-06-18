@@ -19,6 +19,7 @@ import {
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { MenuItem, buildMenuPopup, RouteColumn, buildRouteMenu, buildMenuOverlay } from '../common/MenuPopup';
 import { CommentItemComponent } from '../common/CommentItem';
+import { DeviceUtils } from 'common';
 
 interface OrderItem {
   key: string;
@@ -1223,47 +1224,52 @@ struct Index {
   build() {
     Stack() {
       // ── 全屏 HdsTabs（内容可延伸到顶部栏背后）──
-      HdsTabs({ controller: this.controller, index: this.currentIndex }) {
-        // ── 首页 ──
-        TabContent() {
-          HomePage()
-        }
-        .tabBar(this.TabBarBuilder($r('sys.symbol.house'), '首页', 0))
+      if (canIUse("SystemCapability.UIDesign.HDSComponent.Core")) {
+        HdsTabs({ controller: this.controller, index: this.currentIndex }) {
+          // ── 首页 ──
+          TabContent() {
+            HomePage()
+          }
+          .tabBar(this.TabBarBuilder($r('sys.symbol.house'), '首页', 0))
 
-        // ── 分类 ──
-        TabContent() {
-          CategoryPage()
-        }
-        .tabBar(this.TabBarBuilder($r('sys.symbol.square_grid_2x2'), '分类', 1))
+          // ── 分类 ──
+          TabContent() {
+            CategoryPage()
+          }
+          .tabBar(this.TabBarBuilder($r('sys.symbol.square_grid_2x2'), '分类', 1))
 
-        // ── 讨论区 ──
-        TabContent() {
-          ForumPage()
-        }
-        .tabBar(this.TabBarBuilder($r('sys.symbol.message'), '讨论区', 2))
+          // ── 讨论区 ──
+          TabContent() {
+            ForumPage()
+          }
+          .tabBar(this.TabBarBuilder($r('sys.symbol.message'), '讨论区', 2))
 
-        // ── 个人中心 ──
-        TabContent() {
-          ProfilePage()
+          // ── 个人中心 ──
+          TabContent() {
+            ProfilePage()
+          }
+          .tabBar(this.TabBarBuilder($r('sys.symbol.person'), '个人中心', 3))
         }
-        .tabBar(this.TabBarBuilder($r('sys.symbol.person'), '个人中心', 3))
+        .id('HdsTabsBottom')
+        .barPosition(BarPosition.End)
+        .barOverlap(true)
+        .barFloatingStyle({
+          barBottomMargin: 16,
+          systemMaterialEffect: DeviceUtils.isEmulator() ? undefined : {
+            materialType: hdsMaterial.MaterialType.IMMERSIVE,
+            materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
+          }
+        })
+        .animationDuration(300)
+        .scrollable(true)
+        .width('100%')
+        .height('100%')
+        .onChange((index: number) => {
+          this.currentIndex = index;
+        })
+      } else {
+        // Fallback for unsupported SystemCapability
       }
-      .barPosition(BarPosition.End)
-      .barOverlap(true)
-      .barFloatingStyle({
-        barBottomMargin: 16,
-        systemMaterialEffect: {
-          materialType: hdsMaterial.MaterialType.IMMERSIVE,
-          materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
-        }
-      })
-      .animationDuration(300)
-      .scrollable(true)
-      .width('100%')
-      .height('100%')
-      .onChange((index: number) => {
-        this.currentIndex = index;
-      })
 
       // ── 沉浸式顶部栏（浮层 + 毛玻璃） ──
       Row() {
