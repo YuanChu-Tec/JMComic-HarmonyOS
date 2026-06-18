@@ -85,6 +85,8 @@ struct ImageViewerPage {
   // 后台持续加载相关
   private backgroundLoaderActive: boolean = false;
   private nextLoadIndex: number = 0;       // 下一个要加载的索引
+  private activeLoadCount: number = 0;      // 当前活跃加载数
+  private maxConcurrentLoads: number = 3;   // 最大并发加载数
 
   aboutToAppear(): void {
     let params = router.getParams() as RouterParams;
@@ -229,11 +231,13 @@ struct ImageViewerPage {
       return;
     }
     this.decodingInFlight[index] = true;
+    this.activeLoadCount++;
 
     let img = this.images[index];
     let url = img.img_url || img.download_url;
     if (!url || url.length === 0) {
       this.decodingInFlight[index] = false;
+      this.activeLoadCount--;
       return;
     }
 
@@ -302,21 +306,22 @@ struct ImageViewerPage {
       console.error(`[ImageViewer] decode error at index ${index}: ${JSON.stringify(err)}`);
     } finally {
       this.decodingInFlight[index] = false;
+      this.activeLoadCount--;
       // 触发后台继续加载下一张
       this.continueBackgroundLoading();
     }
   }
 
   /**
-   * 启动后台持续加载器
+   * 启动后台持续加载器（限制并发数）
    */
   private startBackgroundLoader(): void {
     if (!this.backgroundLoaderActive) {
       return;
     }
     console.info(`[ImageViewer] background loader started, total=${this.totalImages}`);
-    // 不限制并发，同时启动所有图片的加载
-    while (this.nextLoadIndex < this.totalImages) {
+    // 启动 maxConcurrentLoads 个并发任务
+    for (let i = 0; i < this.maxConcurrentLoads; i++) {
       this.loadNextImage();
     }
   }
@@ -344,10 +349,11 @@ struct ImageViewerPage {
   }
 
   /**
-   * 当前图片加载完成后，继续加载下一张
+   * 当前图片加载完成后，继续加载下一张（只在活跃数低于上限时启动）
    */
   private continueBackgroundLoading(): void {
     if (this.backgroundLoaderActive) {
+      // 保持并发数稳定：每完成一个任务，立即补一个新任务
       this.loadNextImage();
     }
   }
