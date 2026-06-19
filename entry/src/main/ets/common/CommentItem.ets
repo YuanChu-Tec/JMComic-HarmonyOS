@@ -140,6 +140,7 @@ export struct CommentItemComponent {
         .margin({ left: 8 })
       }
       .width('100%')
+      .alignItems(VerticalAlign.Top)
 
       // ── 子评论区域（在头像和右侧信息下方） ──
       if (this.comment.subComments && this.comment.subComments.length > 0) {
@@ -238,6 +239,7 @@ export struct CommentItemComponent {
             .backgroundColor('#F8F8F8')
             .borderRadius(6)
             .margin({ top: 6 })
+            .alignItems(VerticalAlign.Top)
           }, (sub: CommentInfo) => sub.id)
         }
         .alignItems(HorizontalAlign.Start)

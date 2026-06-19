@@ -77,6 +77,7 @@ export const API_SETTING: string = '/setting';
 export const API_LOGIN: string = '/login';
 export const API_FORUM: string = '/forum';
 export const API_COMMENT: string = '/comment';
+export const API_WATCH_LIST: string = '/watch_list';
 
 // HTTP Headers
 export const APP_HEADERS_TEMPLATE: Record<string, string> = {

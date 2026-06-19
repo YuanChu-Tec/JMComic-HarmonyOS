@@ -16,6 +16,7 @@ import {
   API_LOGIN,
   API_FORUM,
   API_COMMENT,
+  API_WATCH_LIST,
   PAGE_SIZE_SEARCH,
   PAGE_SIZE_FAVORITE,
   IMAGE_SUFFIX_LIST,
@@ -42,6 +43,7 @@ import {
   CommentPageData,
   CommentInfoRaw,
   SendCommentData,
+  WatchListData,
 } from '../models/Album';
 
 /**
@@ -528,6 +530,24 @@ export class ApiService {
       throw new Error(resp.message || '收藏操作失败');
     }
     return resp.data;
+  }
+
+  /**
+   * 获取观看记录列表
+   *
+   * API: GET /watch_list?page=N (需要登录 cookies)
+   * 注意：服务器返回 {list: [...]} 无 total 字段
+   *
+   * @param page 页码（从1开始）
+   * @returns 观看记录分页数据 {list: JmAlbumInfo[]}
+   */
+  async getWatchList(page: number = 1): Promise<JmApiResponse<WatchListData>> {
+    let ts = CryptoUtils.timestamp();
+    let headers = await this.buildTokenHeaders(ts);
+
+    let path = `${API_WATCH_LIST}?page=${page}`;
+    let respStr = await this.requestApi(path, 'GET', null, headers);
+    return await this.decryptResponse<WatchListData>(respStr, ts);
   }
 
   /**

@@ -4,8 +4,8 @@ import { ApiService } from '../network/ApiService';
 import { AlbumViewModel, JmAlbumInfo, JmPromoteSection, SearchResultData, IAlbumViewModelJSON,
   CommentInfo, CommentPageData, parseCommentRaw,
   COMMENT_MODE_ALL, COMMENT_MODE_MANHUA, COMMENT_MODE_CHAT, COMMENT_MODE_NAME_MAP,
-  UserSession,
-  FavoriteAlbumItem, FavoriteFolderItem, FavoritePageData, FavoriteFolderType,
+  UserSession, FavoriteAlbumItem, FavoriteFolderItem, FavoritePageData, FavoriteFolderType,
+  WatchListData,
 } from '../models/Album';
 import { CacheManager } from '../common/CacheManager';
 import {
@@ -207,6 +207,13 @@ struct ProfilePage {
   @State favHasMore: boolean = true;
   @State favTotal: number = 0;
   @State favNeedLoad: boolean = false;
+  @State watchTotal: number = 0;
+  @State watchAlbums: AlbumViewModel[] = [];
+  @State watchIsLoading: boolean = false;
+  @State watchCurrentPage: number = 1;
+  @State watchHasMore: boolean = true;
+  private tabsController: TabsController = new TabsController();
+  private outerScroller: Scroller = new Scroller();
   private apiService: ApiService = ApiService.getInstance();
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
 
@@ -216,6 +223,8 @@ struct ProfilePage {
     if (this.apiService.isLoggedIn()) {
       this.favNeedLoad = true;
       this.loadFavorites();
+      this.loadWatchCount();
+      this.loadWatchHistory();
     }
   }
 
@@ -224,6 +233,22 @@ struct ProfilePage {
     if (this.isLoggedIn && !this.favNeedLoad) {
       this.favNeedLoad = true;
       this.loadFavorites();
+      this.loadWatchCount();
+      this.loadWatchHistory();
+    }
+  }
+
+  async loadWatchCount(): Promise<void> {
+    try {
+      let resp = await this.apiService.getWatchList(1);
+      if (resp.code === 200 && resp.data) {
+        this.watchTotal = resp.data.list.length;
+        console.info('[ProfilePage] loadWatchCount done, count:', this.watchTotal);
+      } else {
+        console.warn('[ProfilePage] loadWatchCount bad resp:', resp.code);
+      }
+    } catch (err) {
+      console.warn('[ProfilePage] load watch count error:', JSON.stringify(err));
     }
   }
 
@@ -260,12 +285,12 @@ struct ProfilePage {
           vm.coverUrl = this.apiService.buildCoverUrl(vm.id);
           return vm;
         });
-        if (this.favCurrentPage === 1) {
-          this.favAlbums = vms;
-        } else {
-          this.favAlbums = this.favAlbums.concat(vms);
-        }
-        this.favHasMore = this.favAlbums.length < this.favTotal;
+        // 去重合并：避免 ForEach key 重复
+        let map = new Map<number, AlbumViewModel>();
+        for (let vm of this.favAlbums) { map.set(vm.id, vm); }
+        for (let vm of vms) { map.set(vm.id, vm); }
+        this.favAlbums = Array.from(map.values());
+        this.favHasMore = vms.length >= PAGE_SIZE_FAVORITE;
       }
     } catch (err) {
       console.error('[ProfilePage] loadFavorites error:', JSON.stringify(err));
@@ -283,6 +308,51 @@ struct ProfilePage {
     this.loadFavorites();
   }
 
+  async loadWatchHistory(): Promise<void> {
+    if (this.watchIsLoading) return;
+    this.watchIsLoading = true;
+    try {
+      let resp = await this.apiService.getWatchList(this.watchCurrentPage);
+      if (resp.code === 200 && resp.data) {
+        let vms = resp.data.list.map((item: JmAlbumInfo) => {
+          let vm = new AlbumViewModel();
+          vm.id = typeof item.id === 'number' ? item.id : parseInt(item.id as string) || 0;
+          vm.name = item.name;
+          vm.author = Array.isArray(item.author) ? item.author.join(', ') : item.author;
+          vm.description = item.description || '';
+          vm.category = typeof item.category === 'object' ? (item.category?.title || '') : (item.category || '');
+          vm.coverUrl = this.apiService.buildCoverUrl(vm.id);
+          return vm;
+        });
+        // 去重合并：历史记录同一漫画可能出现在多页
+        let map = new Map<number, AlbumViewModel>();
+        for (let vm of this.watchAlbums) { map.set(vm.id, vm); }
+        let newCount = 0;
+        for (let vm of vms) {
+          if (!map.has(vm.id)) {
+            map.set(vm.id, vm);
+            newCount++;
+          }
+        }
+        this.watchAlbums = Array.from(map.values());
+        // 无新数据时停止加载
+        this.watchHasMore = newCount > 0;
+      }
+    } catch (err) {
+      console.error('[ProfilePage] loadWatchHistory error:', JSON.stringify(err));
+    } finally {
+      this.watchIsLoading = false;
+      // 本地计算历史总数
+      this.watchTotal = this.watchAlbums.length;
+    }
+  }
+
+  loadMoreWatch(): void {
+    if (this.watchIsLoading || !this.watchHasMore) return;
+    this.watchCurrentPage++;
+    this.loadWatchHistory();
+  }
+
   buildAvatarUrl(): string {
     let photo = this.apiService.getUserSession().photo;
     if (!photo) return '';
@@ -298,7 +368,7 @@ struct ProfilePage {
   }
 
   build() {
-    Scroll() {
+    Scroll(this.outerScroller) {
       Column() {
         if (this.isLoggedIn) {
           // ── 已登录状态 ──
@@ -340,18 +410,6 @@ struct ProfilePage {
           .borderRadius(12)
           .margin({ top: 16 })
 
-          // 统计卡片
-          Row() {
-            this.StatItem('金币', this.apiService.getUserSession().coin.toString())
-            this.StatItem('收藏', `${this.favTotal > 0 ? this.favTotal : this.apiService.getUserSession().albumFavorites}/${this.apiService.getUserSession().albumFavoritesMax}`)
-          }
-          .width('100%')
-          .padding({ left: 24, right: 24, top: 20, bottom: 20 })
-          .justifyContent(FlexAlign.SpaceEvenly)
-          .backgroundColor('#FFFFFF')
-          .borderRadius(12)
-          .margin({ top: 12 })
-
           // 退出按钮
           Button({ type: ButtonType.Normal }) {
             Text('退出登录')
@@ -365,116 +423,175 @@ struct ProfilePage {
           .margin({ top: 24 })
           .onClick(() => this.onLogout())
 
-          // ── 我的收藏（漫画流） ──
-          Column() {
-            // 收藏夹标签
-            if (this.favFolders.length > 0) {
-              Scroll() {
-                Row() {
-                  Text('全部')
-                    .fontSize(13)
-                    .fontColor(this.favCurrentFolderId === '0' ? '#FFFFFF' : '#666666')
-                    .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                    .backgroundColor(this.favCurrentFolderId === '0' ? '#FF5A5F' : '#F5F5F5')
-                    .borderRadius(14)
-                    .margin({ right: 8 })
-                    .onClick(() => this.onFolderChange('0'))
+          // ── 收藏/历史列表 ──
+          Tabs({ controller: this.tabsController, barPosition: BarPosition.Start }) {
+            // 收藏 Tab
+            TabContent() {
+              List() {
+                ListItem() {
+                  Column() {
+                    // 收藏夹标签
+                    if (this.favFolders.length > 0) {
+                      Scroll() {
+                        Row() {
+                          Text('全部')
+                            .fontSize(13)
+                            .fontColor(this.favCurrentFolderId === '0' ? '#FFFFFF' : '#666666')
+                            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                            .backgroundColor(this.favCurrentFolderId === '0' ? '#FF5A5F' : '#F5F5F5')
+                            .borderRadius(14)
+                            .margin({ right: 8 })
+                            .onClick(() => this.onFolderChange('0'))
 
-                  ForEach(this.favFolders, (folder: FavoriteFolderItem) => {
-                    Text(folder.name)
-                      .fontSize(13)
-                      .fontColor(this.favCurrentFolderId === folder.FID ? '#FFFFFF' : '#666666')
-                      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                      .backgroundColor(this.favCurrentFolderId === folder.FID ? '#FF5A5F' : '#F5F5F5')
-                      .borderRadius(14)
-                      .margin({ right: 8 })
-                      .onClick(() => this.onFolderChange(folder.FID))
-                  })
-                }
-                .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-              }
-              .width('100%')
-              .scrollable(ScrollDirection.Horizontal)
-              .scrollBar(BarState.Off)
-            }
+                          ForEach(this.favFolders, (folder: FavoriteFolderItem) => {
+                            Text(folder.name)
+                              .fontSize(13)
+                              .fontColor(this.favCurrentFolderId === folder.FID ? '#FFFFFF' : '#666666')
+                              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+                              .backgroundColor(this.favCurrentFolderId === folder.FID ? '#FF5A5F' : '#F5F5F5')
+                              .borderRadius(14)
+                              .margin({ right: 8 })
+                              .onClick(() => this.onFolderChange(folder.FID))
+                          })
+                        }
+                        .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+                      }
+                      .width('100%')
+                      .scrollable(ScrollDirection.Horizontal)
+                      .scrollBar(BarState.Off)
+                    }
 
-            // 漫画流
-            if (this.favAlbums.length === 0 && this.favIsLoading) {
-              Column() {
-                LoadingProgress()
-                  .width(40)
-                  .height(40)
-                  .color('#FF5A5F')
-                Text('加载中...')
-                  .fontSize(14)
-                  .fontColor('#999999')
-                  .margin({ top: 12 })
-              }
-              .width('100%')
-              .height(300)
-              .justifyContent(FlexAlign.Center)
-            } else if (this.favAlbums.length === 0) {
-              Column() {
-                Text('暂无收藏')
-                  .fontSize(16)
-                  .fontColor('#999999')
-              }
-              .width('100%')
-              .height(200)
-              .justifyContent(FlexAlign.Center)
-            } else {
-              Grid() {
-                ForEach(this.favAlbums, (album: AlbumViewModel) => {
-                  GridItem() {
-                    this.FavAlbumCard(album)
+                    // 收藏列表
+                    if (this.favAlbums.length === 0 && this.favIsLoading) {
+                      Column() {
+                        LoadingProgress().width(40).height(40).color('#FF5A5F')
+                        Text('加载中...').fontSize(14).fontColor('#999999').margin({ top: 12 })
+                      }
+                      .width('100%')
+                      .height(300)
+                      .justifyContent(FlexAlign.Center)
+                    } else if (this.favAlbums.length === 0) {
+                      Column() {
+                        Text('暂无收藏').fontSize(16).fontColor('#999999')
+                      }
+                      .width('100%')
+                      .height(200)
+                      .justifyContent(FlexAlign.Center)
+                    } else {
+                      Grid() {
+                        ForEach(this.favAlbums, (album: AlbumViewModel) => {
+                          GridItem() {
+                            this.FavAlbumCard(album)
+                          }
+                          .onClick(() => this.onAlbumClick(album))
+                        }, (album: AlbumViewModel) => `${album.id}`)
+                      }
+                      .columnsTemplate(this.isTablet ? '1fr 1fr 1fr 1fr' : '1fr 1fr')
+                      .columnsGap(10)
+                      .rowsGap(10)
+                      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+                    }
+
+                    // 收藏加载更多（自动加载）
+                    if (this.favIsLoading && this.favAlbums.length > 0) {
+                      Row() {
+                        LoadingProgress().width(20).height(20).color('#FF5A5F')
+                        Text('加载中...').fontSize(12).fontColor('#999999').margin({ left: 6 })
+                      }
+                      .width('100%').justifyContent(FlexAlign.Center)
+                      .padding({ top: 12, bottom: 20 })
+                    }
+                    if (!this.favHasMore && this.favAlbums.length > 0) {
+                      Text('没有更多了').fontSize(12).fontColor('#CCCCCC')
+                        .width('100%').textAlign(TextAlign.Center)
+                        .padding({ top: 8, bottom: 20 })
+                    }
                   }
-                  .onClick(() => this.onAlbumClick(album))
-                }, (album: AlbumViewModel) => `${album.id}`)
+                  .width('100%')
+                  .padding({ bottom: 80 })
+                }
               }
-              .columnsTemplate(this.isTablet ? '1fr 1fr 1fr 1fr' : '1fr 1fr')
-              .columnsGap(10)
-              .rowsGap(10)
-              .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-            }
-
-            // 加载更多
-            if (this.favHasMore && !this.favIsLoading) {
-              Text('加载更多...')
-                .fontSize(13)
-                .fontColor('#CCCCCC')
-                .width('100%')
-                .textAlign(TextAlign.Center)
-                .padding({ top: 16, bottom: 16 })
-                .onClick(() => {
+              .width('100%')
+              .nestedScroll({
+                scrollForward: NestedScrollMode.PARENT_FIRST,
+                scrollBackward: NestedScrollMode.SELF_FIRST
+              })
+              .onReachEnd(() => {
+                if (this.favHasMore && !this.favIsLoading) {
                   this.favCurrentPage++;
                   this.loadFavorites();
-                })
+                }
+              })
             }
+            .tabBar('收藏')
 
-            if (this.favIsLoading && this.favAlbums.length > 0) {
-              Row() {
-                LoadingProgress()
-                  .width(24)
-                  .height(24)
-                  .color('#FF5A5F')
-                Text('加载中...')
-                  .fontSize(13)
-                  .fontColor('#999999')
-                  .margin({ left: 8 })
+            // 历史 Tab
+            TabContent() {
+              List() {
+                ListItem() {
+                  Column() {
+                    // 历史列表
+                    if (this.watchAlbums.length === 0 && this.watchIsLoading) {
+                      Column() {
+                        LoadingProgress().width(40).height(40).color('#FF5A5F')
+                        Text('加载中...').fontSize(14).fontColor('#999999').margin({ top: 12 })
+                      }
+                      .width('100%')
+                      .height(300)
+                      .justifyContent(FlexAlign.Center)
+                    } else if (this.watchAlbums.length === 0) {
+                      Column() {
+                        Text('暂无观看记录').fontSize(16).fontColor('#999999')
+                      }
+                      .width('100%')
+                      .height(200)
+                      .justifyContent(FlexAlign.Center)
+                    } else {
+                      Grid() {
+                        ForEach(this.watchAlbums, (album: AlbumViewModel) => {
+                          GridItem() {
+                            this.FavAlbumCard(album)
+                          }
+                          .onClick(() => this.onAlbumClick(album))
+                        }, (album: AlbumViewModel) => `${album.id}`)
+                      }
+                      .columnsTemplate(this.isTablet ? '1fr 1fr 1fr 1fr' : '1fr 1fr')
+                      .columnsGap(10)
+                      .rowsGap(10)
+                      .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+                    }
+
+                    // 历史加载更多（自动加载）
+                    if (this.watchIsLoading && this.watchAlbums.length > 0) {
+                      Row() {
+                        LoadingProgress().width(20).height(20).color('#FF5A5F')
+                        Text('加载中...').fontSize(12).fontColor('#999999').margin({ left: 6 })
+                      }
+                      .width('100%').justifyContent(FlexAlign.Center)
+                      .padding({ top: 12, bottom: 20 })
+                    }
+                    if (!this.watchHasMore && this.watchAlbums.length > 0) {
+                      Text('没有更多了').fontSize(12).fontColor('#CCCCCC')
+                        .width('100%').textAlign(TextAlign.Center)
+                        .padding({ top: 8, bottom: 20 })
+                    }
+                  }
+                  .width('100%')
+                  .padding({ bottom: 80 })
+                }
               }
               .width('100%')
-              .justifyContent(FlexAlign.Center)
-              .padding({ top: 16, bottom: 16 })
+              .nestedScroll({
+                scrollForward: NestedScrollMode.PARENT_FIRST,
+                scrollBackward: NestedScrollMode.SELF_FIRST
+              })
+              .onReachEnd(() => {
+                if (this.watchHasMore && !this.watchIsLoading) {
+                  this.loadMoreWatch();
+                }
+              })
             }
-
-            if (!this.favHasMore && this.favAlbums.length > 0) {
-              Text('没有更多了')
-                .fontSize(12)
-                .fontColor('#CCCCCC')
-                .width('100%')
-                .textAlign(TextAlign.Center)
-                .padding({ top: 8, bottom: 20 })
-            }
+            .tabBar('历史')
           }
           .width('100%')
           .margin({ top: 12 })
@@ -522,27 +639,12 @@ struct ProfilePage {
         }
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: this.topSafeHeight + 40, bottom: 80 })
+      .padding({ left: 16, right: 16, top: this.topSafeHeight + 40 })
     }
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
     .backgroundColor('#F5F5F5')
-  }
-
-  @Builder
-  StatItem(label: string, value: string) {
-    Column() {
-      Text(value)
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor('#333333')
-      Text(label)
-        .fontSize(12)
-        .fontColor('#999999')
-        .margin({ top: 4 })
-    }
-    .alignItems(HorizontalAlign.Center)
   }
 
   @Builder

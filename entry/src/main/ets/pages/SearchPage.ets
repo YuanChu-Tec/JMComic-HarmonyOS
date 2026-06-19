@@ -283,6 +283,7 @@ struct SearchPage {
               }
             }
             .width('100%')
+            .justifyContent(FlexAlign.Start)
           }
           .width('100%')
           .height('100%')

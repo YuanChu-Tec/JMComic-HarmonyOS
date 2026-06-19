@@ -208,6 +208,8 @@ struct AlbumCommentPage {
               }
             }
             .width('100%')
+            .padding({ top: this.topSafeHeight + 56 })  // 避免被导航栏遮挡
+            .justifyContent(FlexAlign.Start)
           }
           .layoutWeight(1)
           .width('100%')
@@ -244,7 +246,6 @@ struct AlbumCommentPage {
       }
       .width('100%')
       .height('100%')
-      .padding({ top: this.topSafeHeight })
       .backgroundColor('#F5F5F5')
 
       // ── 顶部导航栏 ──

@@ -190,6 +190,11 @@ export interface FavoriteActionResult {
   msg: string;
 }
 
+/** 观看记录列表API响应 data */
+export interface WatchListData {
+  list: JmAlbumInfo[];
+}
+
 /** 收藏夹操作类型 */
 export enum FavoriteFolderType {
   ADD = 'add',
