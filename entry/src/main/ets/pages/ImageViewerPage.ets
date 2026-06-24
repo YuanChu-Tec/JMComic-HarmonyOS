@@ -2,10 +2,10 @@ import { router } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import { http } from '@kit.NetworkKit';
 import { ApiService } from '../network/ApiService';
+import { CacheManager } from '../common/CacheManager';
 import { ImageDecodeUtils } from '../common/ImageDecodeUtils';
 import { APP_HEADERS_IMAGE } from '../common/Constants';
 import { JmImageInfo, PictureData } from '../models/Album';
-import { CacheManager } from '../common/CacheManager';
 
 interface ChapterInfo {
   photoId: string;
@@ -172,6 +172,8 @@ struct ImageViewerPage {
     } finally {
       this.isLoading = false;
     }
+    // 标记该章节为已读
+    this.cache?.markChapterRead(this.albumId, this.photoId);
   }
 
   onBack(): void {
@@ -447,7 +449,7 @@ struct ImageViewerPage {
               .fontColor(['#FFFFFF'])
               .onClick(() => this.onBack())
 
-            Text(this.titleText)
+            Text(`第${this.currentChapterIndex + 1}章 - ${this.titleText}`)
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
               .fontColor('#FFFFFF')

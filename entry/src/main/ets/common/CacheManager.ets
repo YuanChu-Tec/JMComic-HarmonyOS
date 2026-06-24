@@ -16,7 +16,7 @@ export class CacheManager {
   private static TTL_CATEGORY = 30 * 60 * 1000; // 30 分钟
   private static TTL_FAVORITE = 10 * 60 * 1000; // 10 分钟
   private static TTL_SEARCH_RESULT = 30 * 60 * 1000; // 30 分钟
-  private static MAX_SEARCH_HISTORY = 20;
+  private static MAX_SEARCH_HISTORY = 9999;
 
   private static instance: CacheManager | null = null;
   private prefs: preferences.Preferences | null = null;
@@ -61,14 +61,6 @@ export class CacheManager {
 
   // ─── 首页分类列表缓存 ───
 
-  /**
-   * 保存首页列表数据
-   * @param category 分类
-   * @param order 排序
-   * @param page 页码
-   * @param albums 列表数据 JSON 字符串
-   * @param total 总数
-   */
   saveCategoryList(category: string, order: string, page: number, albums: string, total: number): void {
     let key = `cat_${category}_${order}`;
     let pageKey = `${key}_p${page}`;
@@ -78,7 +70,6 @@ export class CacheManager {
       timestamp: Date.now()
     };
     this.putObject(pageKey, entry);
-    // 更新页码索引
     let index = this.getObject<number[]>(`${key}_pages`) || [];
     if (!index.includes(page)) {
       index.push(page);
@@ -86,35 +77,22 @@ export class CacheManager {
     }
   }
 
-  /**
-   * 加载首页列表数据
-   * @param category 分类
-   * @param order 排序
-   * @param page 页码
-   * @returns 缓存的数据或 null（过期/不存在）
-   */
   loadCategoryList(category: string, order: string, page: number): CachePageEntry | null {
     let key = `cat_${category}_${order}`;
     let pageKey = `${key}_p${page}`;
     let entry = this.getObject<CachePageEntry>(pageKey);
     if (!entry) return null;
     if (Date.now() - entry.timestamp > CacheManager.TTL_CATEGORY) {
-      return null; // 过期
+      return null;
     }
     return entry;
   }
 
-  /**
-   * 获取某分类+排序下的所有已缓存页码（用于初始化列表）
-   */
   getCategoryPages(category: string, order: string): number[] {
     let key = `cat_${category}_${order}`;
     return this.getObject<number[]>(`${key}_pages`) || [];
   }
 
-  /**
-   * 清除某分类缓存
-   */
   clearCategoryCache(category: string, order: string): void {
     let key = `cat_${category}_${order}`;
     let pages = this.getCategoryPages(category, order);
@@ -155,7 +133,6 @@ export class CacheManager {
 
   addSearchHistory(keyword: string): void {
     let history = this.getSearchHistory();
-    // 去重并移到最前
     history = history.filter(k => k !== keyword);
     history.unshift(keyword);
     if (history.length > CacheManager.MAX_SEARCH_HISTORY) {
@@ -179,7 +156,6 @@ export class CacheManager {
       extra: folders
     };
     this.putObject(pageKey, entry);
-    // 页码索引
     let index = this.getObject<number[]>(`fav_${folderId}_pages`) || [];
     if (!index.includes(page)) {
       index.push(page);
@@ -230,19 +206,10 @@ export class CacheManager {
 
   // ─── 章节图片数据缓存 ───
 
-  /**
-   * 缓存章节图片元数据（PictureData 的 JSON）
-   * key 格式: chapter_{photoId}
-   * 永不过期，只在用户手动清除或覆盖时更新
-   */
   saveChapterData(photoId: string, dataJson: string): void {
     this.put(`chapter_${photoId}`, dataJson);
   }
 
-  /**
-   * 加载缓存的章节图片元数据
-   * @returns JSON 字符串或 null
-   */
   loadChapterData(photoId: string): string | null {
     return this.getString(`chapter_${photoId}`) || null;
   }
@@ -256,6 +223,28 @@ export class CacheManager {
   loadDownloadTasks(): string {
     return this.getString('download_tasks', '[]');
   }
+
+  // ─── 阅读历史（已读章节标记） ───
+
+  markChapterRead(albumId: number, chapterId: string): void {
+    this.put(`read_${albumId}_${chapterId}`, Date.now().toString());
+    // 同时更新最后阅读章节
+    this.put(`lastread_${albumId}`, chapterId);
+  }
+
+  isChapterRead(albumId: number, chapterId: string): boolean {
+    let val = this.getString(`read_${albumId}_${chapterId}`);
+    return val !== '';
+  }
+
+  getLastReadChapterId(albumId: number): string {
+    return this.getString(`lastread_${albumId}`);
+  }
+
+  getChapterReadTime(albumId: number, chapterId: string): number {
+    let val = this.getString(`read_${albumId}_${chapterId}`);
+    return val ? parseInt(val) : 0;
+  }
 }
 
 /** 缓存分页条目 */
@@ -263,5 +252,5 @@ export interface CachePageEntry {
   data: string;
   total: number;
   timestamp: number;
-  extra?: string; // 额外数据（如 folders JSON）
+  extra?: string;
 }

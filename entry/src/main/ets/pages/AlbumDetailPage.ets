@@ -1,5 +1,6 @@
 import { router, promptAction } from '@kit.ArkUI';
 import { ApiService } from '../network/ApiService';
+import { CacheManager } from '../common/CacheManager';
 import {
   JmAlbumDetail,
   JmPhotoInfo,
@@ -37,26 +38,34 @@ struct AlbumDetailPage {
   @State isChapterExpanded: boolean = false;
   @State isFavorited: boolean = false;
   @State favLoading: boolean = false;
+  @State refreshTrigger: number = 0;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @StorageProp('isLoggedIn') isLoggedIn: boolean = false;
+  @State hasRead: boolean = false;
+  private lastReadChapterId: string = '';
   private albumId: number = 0;
   private apiService: ApiService = ApiService.getInstance();
+  private cacheManager: CacheManager | null = null;
   private favCheckedId: number = -1; // 已经做过二次校验的 albumId，避免重复请求
 
-  aboutToAppear(): void {
+  async aboutToAppear(): Promise<void> {
     let params = router.getParams() as RouterParams;
     if (params) {
       this.albumId = params.albumId;
       this.albumName = params.albumName || '详情';
     }
+    this.cacheManager = await CacheManager.getInstance();
     this.loadDetail();
   }
 
   onPageShow(): void {
-    // 每次页面显示时重新校验收藏状态（从别的页面返回时）
+    // 每次页面显示时重新校验收藏状态和已读状态
     if (this.isLoggedIn && this.album) {
       this.verifyFavorited();
+    }
+    if (this.chapters.length > 0) {
+      this.loadReadStatus();
     }
   }
 
@@ -92,6 +101,8 @@ struct AlbumDetailPage {
           }
           this.albumName = this.album.name;
           this.isFavorited = this.album.is_favorite === true;
+          // 检查已读章节
+          this.loadReadStatus();
           // 已登录时，用收藏列表做二次确认（详情API的is_favorite不可靠）
           if (this.isLoggedIn && !this.isFavorited) {
             this.verifyFavorited();
@@ -103,6 +114,22 @@ struct AlbumDetailPage {
     } finally {
       this.isLoading = false;
     }
+  }
+
+  /**
+   * 检查已读章节
+   */
+  loadReadStatus(): void {
+    if (!this.cacheManager) return;
+    let anyRead = false;
+    for (let ch of this.chapters) {
+      ch.isRead = this.cacheManager.isChapterRead(this.albumId, ch.photoId);
+      if (ch.isRead) anyRead = true;
+    }
+    this.hasRead = anyRead;
+    this.lastReadChapterId = this.cacheManager.getLastReadChapterId(this.albumId) || '';
+    this.chapters = [...this.chapters];
+    this.refreshTrigger++;
   }
 
   /**
@@ -459,7 +486,7 @@ struct AlbumDetailPage {
             // ── 开始阅读 + 评论 按钮 ──
             if (this.chapters.length > 0) {
               Row() {
-                Button('开始阅读')
+                Button(this.hasRead && this.chapters.length > 1 ? '继续阅读' : '开始阅读')
                   .layoutWeight(1)
                   .height(48)
                   .fontSize(16)
@@ -467,7 +494,18 @@ struct AlbumDetailPage {
                   .fontColor('#FFFFFF')
                   .backgroundColor('#FF5A5F')
                   .borderRadius(24)
-                  .onClick(() => this.onChapterClick(this.chapters[0]))
+                  .onClick(() => {
+                    if (this.hasRead && this.lastReadChapterId) {
+                      let idx = this.chapters.findIndex(ch => ch.photoId === this.lastReadChapterId);
+                      if (idx >= 0) {
+                        this.onChapterClick(this.chapters[idx]);
+                      } else {
+                        this.onChapterClick(this.chapters[0]);
+                      }
+                    } else {
+                      this.onChapterClick(this.chapters[0]);
+                    }
+                  })
 
                 Button('评论')
                   .height(48)
@@ -532,6 +570,16 @@ struct AlbumDetailPage {
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                     .margin({ left: 8 })
 
+                  if (photo.isRead) {
+                    Text('看过')
+                      .fontSize(11)
+                      .fontColor('#FF5A5F')
+                      .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+                      .backgroundColor('#FFF0F0')
+                      .borderRadius(4)
+                      .margin({ right: 6 })
+                  }
+
                   SymbolGlyph($r('sys.symbol.chevron_right'))
                     .fontSize(16)
                     .fontColor(['#CCCCCC'])
@@ -539,9 +587,9 @@ struct AlbumDetailPage {
                 .width('100%')
                 .height(52)
                 .padding({ left: 16, right: 16 })
-                .backgroundColor('#FFFFFF')
+                .backgroundColor(photo.isRead ? '#FFF0F0' : '#FFFFFF')
                 .onClick(() => this.onChapterClick(photo))
-              }, (item: PhotoViewModel) => item.id.toString())
+              }, (item: PhotoViewModel) => `${item.id}_${item.isRead}`)
             }
 
             // 相关作品

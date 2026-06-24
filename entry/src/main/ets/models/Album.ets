@@ -536,6 +536,7 @@ export class PhotoViewModel {
   name: string = '';
   index: number = 0;
   scrambleId: number = 0;
+  isRead: boolean = false;  // 是否已读
 
   static fromApiInfo(info: JmPhotoInfo): PhotoViewModel {
     let vm = new PhotoViewModel();
