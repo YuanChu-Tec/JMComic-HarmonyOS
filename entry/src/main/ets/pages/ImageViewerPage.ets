@@ -4,6 +4,7 @@ import { http } from '@kit.NetworkKit';
 import { ApiService } from '../network/ApiService';
 import { CacheManager } from '../common/CacheManager';
 import { ImageDecodeUtils } from '../common/ImageDecodeUtils';
+import { DecodedImageCache } from '../common/DecodedImageCache';
 import { APP_HEADERS_IMAGE } from '../common/Constants';
 import { JmImageInfo, PictureData } from '../models/Album';
 
@@ -18,7 +19,7 @@ interface RouterParams {
   scrambleId: number;
   albumId: number;
   albumName: string;
-  chaptersStr?: string;        // 章节列表 JSON 字符串
+  chaptersStr?: string;
   currentChapterIndex?: number;
 }
 
@@ -48,7 +49,6 @@ class ImageDataSource implements IDataSource {
     }
   }
 
-  /** 整体替换数据并触发全量刷新 */
   reload(images: JmImageInfo[]): void {
     this.images = images;
     this.listeners.forEach(l => l.onDataReloaded());
@@ -67,6 +67,8 @@ struct ImageViewerPage {
   @State decodedPixelMaps: (image.PixelMap | null)[] = [];
   @State hasPrevChapter: boolean = false;
   @State hasNextChapter: boolean = false;
+  @State isZoomed: boolean = false;
+  private zoomScale: number = 1.0;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private photoId: string = '';
@@ -77,16 +79,19 @@ struct ImageViewerPage {
   private currentChapterIndex: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private cache: CacheManager | null = null;
+  private decodedCache: DecodedImageCache | null = null;
   private totalImages: number = 0;
+  private scrollScroller: Scroller = new Scroller();
   private listScroller: Scroller = new Scroller();
-  private decodingInFlight: boolean[] = [];
   private chapterGeneration: number = 0;
   private imageDataSource: ImageDataSource = new ImageDataSource();
-  // 后台持续加载相关
-  private backgroundLoaderActive: boolean = false;
-  private nextLoadIndex: number = 0;       // 下一个要加载的索引
-  private activeLoadCount: number = 0;      // 当前活跃加载数
-  private maxConcurrentLoads: number = 3;   // 最大并发加载数
+  // 后台预加载：下载+拼图解码+写PNG，不涉及 UI
+  private preloadActive: boolean = false;
+  private preloadIndex: number = 0;
+  private preloadInFlight: number = 0;
+  private maxPreloadConcurrent: number = 3;
+  // 前台加载：从磁盘 PNG 创建 PixelMap
+  private uiLoadInFlight: Set<number> = new Set();
 
   aboutToAppear(): void {
     let params = router.getParams() as RouterParams;
@@ -97,7 +102,6 @@ struct ImageViewerPage {
       this.albumName = params.albumName || '';
       this.titleText = params.photoName || '';
       this.currentChapterIndex = params.currentChapterIndex ?? 0;
-      // 从 JSON 字符串解析章节列表
       if (params.chaptersStr) {
         try {
           this.chapters = JSON.parse(params.chaptersStr) as ChapterInfo[];
@@ -116,8 +120,8 @@ struct ImageViewerPage {
 
     try {
       this.cache = await CacheManager.getInstance();
+      this.decodedCache = await DecodedImageCache.getInstance();
 
-      // 尝试从缓存加载
       let cached = this.cache!.loadChapterData(this.photoId);
       let data: PictureData | null = null;
 
@@ -130,10 +134,8 @@ struct ImageViewerPage {
         }
       }
 
-      // 缓存未命中则请求 API
       if (!data) {
         data = await this.apiService.getChapterPictures(this.photoId, this.scrambleId);
-        // 持久化到缓存
         try {
           this.cache!.saveChapterData(this.photoId, JSON.stringify(data));
           console.info(`[ImageViewer] saved chapter data to cache: ${this.photoId}`);
@@ -150,20 +152,16 @@ struct ImageViewerPage {
         if (data.pictures.scramble_id) {
           this.scrambleId = data.pictures.scramble_id;
         }
-        // 初始化像素映射数组
+        // 初始化 PixelMap 数组
         let arr: (image.PixelMap | null)[] = [];
-        let flight: boolean[] = [];
         for (let i = 0; i < this.totalImages; i++) {
           arr.push(null);
-          flight.push(false);
         }
         this.decodedPixelMaps = arr;
-        this.decodingInFlight = flight;
-        // 重置后台加载器状态
-        this.nextLoadIndex = 0;
-        this.backgroundLoaderActive = true;
-        // 启动后台持续加载
-        this.startBackgroundLoader();
+        // 启动后台预加载器
+        this.preloadIndex = 0;
+        this.preloadActive = true;
+        this.startPreloader();
       }
     } catch (err) {
       let errMsg = err instanceof Error ? err.message : JSON.stringify(err);
@@ -172,7 +170,6 @@ struct ImageViewerPage {
     } finally {
       this.isLoading = false;
     }
-    // 标记该章节为已读
     this.cache?.markChapterRead(this.albumId, this.photoId);
   }
 
@@ -187,7 +184,6 @@ struct ImageViewerPage {
   private updateChapterButtons(): void {
     this.hasPrevChapter = this.currentChapterIndex > 0;
     this.hasNextChapter = this.chapters.length > 0 && this.currentChapterIndex < this.chapters.length - 1;
-    console.info(`[ImageViewer] chapters=${this.chapters.length}, index=${this.currentChapterIndex}, prev=${this.hasPrevChapter}, next=${this.hasNextChapter}`);
   }
 
   goPrevChapter(): void {
@@ -203,8 +199,8 @@ struct ImageViewerPage {
   }
 
   private switchToChapter(chapter: ChapterInfo, index: number): void {
-    this.chapterGeneration++;  // 作废旧解码任务
-    this.backgroundLoaderActive = false;  // 停止后台加载
+    this.chapterGeneration++;
+    this.preloadActive = false;
     this.photoId = chapter.photoId;
     this.titleText = chapter.photoName || '';
     this.currentChapterIndex = index;
@@ -212,42 +208,60 @@ struct ImageViewerPage {
     this.images = [];
     this.imageDataSource.reload([]);
     this.decodedPixelMaps = [];
-    this.decodingInFlight = [];
     this.totalImages = 0;
     this.updateChapterButtons();
-    this.listScroller.scrollToIndex(0);
+    this.zoomScale = 1.0;
+    this.isZoomed = false;
+    this.scrollScroller.scrollEdge(Edge.Top);
     this.loadImagesWithCache();
   }
 
-  /**
-   * 下载并解码指定索引的图片
-   */
-  async decodeImageAtIndex(index: number): Promise<void> {
-    if (index < 0 || index >= this.images.length) {
-      return;
-    }
-    if (this.decodedPixelMaps[index]) {
-      return;
-    }
-    if (this.decodingInFlight[index]) {
-      return;
-    }
-    this.decodingInFlight[index] = true;
-    this.activeLoadCount++;
+  // ═══════════════════════════════════════════════════════
+  // 后台预加载：下载 + 拼图解码 + 写 PNG 到磁盘
+  // 纯 IO，不触发任何 @State 更新
+  // ═══════════════════════════════════════════════════════
 
-    let img = this.images[index];
-    let url = img.img_url || img.download_url;
-    if (!url || url.length === 0) {
-      this.decodingInFlight[index] = false;
-      this.activeLoadCount--;
+  private startPreloader(): void {
+    if (!this.preloadActive) return;
+    console.info(`[Preloader] started, total=${this.totalImages}`);
+    for (let i = 0; i < this.maxPreloadConcurrent; i++) {
+      this.preloadNext();
+    }
+  }
+
+  private preloadNext(): void {
+    if (!this.preloadActive) return;
+    while (this.preloadIndex < this.totalImages) {
+      let idx = this.preloadIndex;
+      this.preloadIndex++;
+      // 已有磁盘缓存则跳过
+      if (this.decodedCache && this.decodedCache.hasCached(this.photoId, idx)) {
+        continue;
+      }
+      this.preloadInFlight++;
+      this.preloadToDisk(idx);
       return;
     }
+    // 全部完成
+    if (this.preloadInFlight <= 0) {
+      this.preloadActive = false;
+      console.info('[Preloader] all images preloaded');
+    }
+  }
 
+  private async preloadToDisk(index: number): Promise<void> {
     let gen = this.chapterGeneration;
-    console.info(`[ImageViewer] decoding image ${index + 1}/${this.totalImages}: ${url}`);
-
     try {
-      // 1. 下载图片原始字节
+      // 再次检查磁盘缓存（可能其他任务已写入）
+      if (this.decodedCache && this.decodedCache.hasCached(this.photoId, index)) {
+        return;
+      }
+
+      let img = this.images[index];
+      let url = img.img_url || img.download_url;
+      if (!url || url.length === 0) return;
+
+      // 1. 下载原始字节
       let request = http.createHttp();
       let response = await request.request(url, {
         method: http.RequestMethod.GET,
@@ -256,18 +270,8 @@ struct ImageViewerPage {
         connectTimeout: 15000,
         readTimeout: 30000,
       });
-
-      if (gen !== this.chapterGeneration) {
-        request.destroy();
-        return;
-      }
-
-      if (response.responseCode !== 200) {
-        console.warn(`[ImageViewer] download failed: HTTP ${response.responseCode}`);
-        request.destroy();
-        this.decodingInFlight[index] = false;
-        return;
-      }
+      if (gen !== this.chapterGeneration) { request.destroy(); return; }
+      if (response.responseCode !== 200) { request.destroy(); return; }
 
       let arrayBuffer = response.result as ArrayBuffer;
       request.destroy();
@@ -279,84 +283,144 @@ struct ImageViewerPage {
       };
       let pixelMap = await imageSource.createPixelMap(decodeOpts);
       imageSource.release();
+      if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
 
-      if (gen !== this.chapterGeneration) {
-        return;
-      }
-
-      // 3. 计算分割数并解码
+      // 3. 拼图解码
       let imgNameNoExt = img.img_name.replace(/\.[^.]+$/, '');
       let num = await ImageDecodeUtils.getSegmentationNum(
         this.scrambleId,
         parseInt(this.photoId),
         imgNameNoExt
       );
-
-      if (gen !== this.chapterGeneration) {
-        return;
-      }
-
-      console.info(`[ImageViewer] segmentation num=${num}, scrambleId=${this.scrambleId}, photoId=${this.photoId}`);
+      if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
 
       if (num > 0) {
         pixelMap = await ImageDecodeUtils.decodeImage(pixelMap, num);
       }
+      if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
 
-      // 用 splice 确保 @State 响应式更新
-      this.decodedPixelMaps.splice(index, 1, pixelMap);
+      // 4. 写 PNG 到磁盘
+      if (this.decodedCache) {
+        await this.decodedCache.saveDecodedImage(this.photoId, index, pixelMap);
+      }
+
+      // 5. 释放内存（磁盘已有备份）
+      pixelMap.release();
+      console.info(`[Preloader] saved ${index + 1}/${this.totalImages}`);
     } catch (err) {
-      console.error(`[ImageViewer] decode error at index ${index}: ${JSON.stringify(err)}`);
+      console.error(`[Preloader] error at ${index}: ${JSON.stringify(err)}`);
     } finally {
-      this.decodingInFlight[index] = false;
-      this.activeLoadCount--;
-      // 触发后台继续加载下一张
-      this.continueBackgroundLoading();
+      this.preloadInFlight--;
+      this.preloadNext();
     }
   }
 
-  /**
-   * 启动后台持续加载器（限制并发数）
-   */
-  private startBackgroundLoader(): void {
-    if (!this.backgroundLoaderActive) {
-      return;
-    }
-    console.info(`[ImageViewer] background loader started, total=${this.totalImages}`);
-    // 启动 maxConcurrentLoads 个并发任务
-    for (let i = 0; i < this.maxConcurrentLoads; i++) {
-      this.loadNextImage();
+  // ═══════════════════════════════════════════════════════
+  // 前台加载：从磁盘 PNG 创建 PixelMap 显示
+  // ═══════════════════════════════════════════════════════
+
+  private async loadPixelMap(index: number): Promise<void> {
+    if (index < 0 || index >= this.images.length) return;
+    if (this.decodedPixelMaps[index]) return;
+    if (this.uiLoadInFlight.has(index)) return;
+
+    this.uiLoadInFlight.add(index);
+    let gen = this.chapterGeneration;
+
+    try {
+      // 从磁盘 PNG 加载（毫秒级）
+      if (this.decodedCache && this.decodedCache.hasCached(this.photoId, index)) {
+        let pm = await this.decodedCache.loadDecodedImage(this.photoId, index);
+        if (gen !== this.chapterGeneration) {
+          if (pm) pm.release();
+          return;
+        }
+        if (pm) {
+          this.decodedPixelMaps.splice(index, 1, pm);
+          return;
+        }
+      }
+
+      // 磁盘缓存未命中（预加载还没到），降级走网络
+      await this.fallbackLoadFromNetwork(index, gen);
+    } finally {
+      this.uiLoadInFlight.delete(index);
     }
   }
 
-  /**
-   * 加载下一个未加载的图片
-   */
-  private loadNextImage(): void {
-    if (!this.backgroundLoaderActive) {
-      return;
+  private async fallbackLoadFromNetwork(index: number, gen: number): Promise<void> {
+    let img = this.images[index];
+    let url = img.img_url || img.download_url;
+    if (!url || url.length === 0) return;
+
+    console.info(`[ImageViewer] fallback network load: ${index + 1}/${this.totalImages}`);
+
+    let request = http.createHttp();
+    let response = await request.request(url, {
+      method: http.RequestMethod.GET,
+      expectDataType: http.HttpDataType.ARRAY_BUFFER,
+      header: APP_HEADERS_IMAGE,
+      connectTimeout: 15000,
+      readTimeout: 30000,
+    });
+    if (gen !== this.chapterGeneration) { request.destroy(); return; }
+    if (response.responseCode !== 200) { request.destroy(); return; }
+
+    let arrayBuffer = response.result as ArrayBuffer;
+    request.destroy();
+
+    let imageSource = image.createImageSource(arrayBuffer);
+    let pixelMap = await imageSource.createPixelMap({
+      desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
+    });
+    imageSource.release();
+    if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
+
+    let imgNameNoExt = img.img_name.replace(/\.[^.]+$/, '');
+    let num = await ImageDecodeUtils.getSegmentationNum(
+      this.scrambleId,
+      parseInt(this.photoId),
+      imgNameNoExt
+    );
+    if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
+
+    if (num > 0) {
+      pixelMap = await ImageDecodeUtils.decodeImage(pixelMap, num);
     }
-    // 找到下一个未加载的图片
-    while (this.nextLoadIndex < this.totalImages) {
-      let index = this.nextLoadIndex;
-      this.nextLoadIndex++;
-      if (!this.decodedPixelMaps[index] && !this.decodingInFlight[index]) {
-        // 异步加载，不等待
-        this.decodeImageAtIndex(index);
-        return;
+    if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
+
+    // 写入磁盘缓存 + 显示
+    if (this.decodedCache) {
+      this.decodedCache.saveDecodedImage(this.photoId, index, pixelMap);
+    }
+    this.decodedPixelMaps.splice(index, 1, pixelMap);
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // 缩放回调
+  // ═══════════════════════════════════════════════════════
+
+  /**
+   * 预加载视口附近的 PixelMap（消除快速滑动闪占位图）
+   * 在 onAppear 时调用，提前将 cachedCount 范围内的图片从磁盘加载到内存
+   */
+  private preloadNearbyPixelMaps(centerIndex: number): void {
+    let range = 10;
+    let low = Math.max(0, centerIndex - range);
+    let high = Math.min(this.totalImages - 1, centerIndex + range);
+    for (let i = low; i <= high; i++) {
+      if (!this.decodedPixelMaps[i] && !this.uiLoadInFlight.has(i)) {
+        this.loadPixelMap(i);
       }
     }
-    // 所有图片已加载完成
-    this.backgroundLoaderActive = false;
-    console.info('[ImageViewer] background loader finished');
   }
 
-  /**
-   * 当前图片加载完成后，继续加载下一张（只在活跃数低于上限时启动）
-   */
-  private continueBackgroundLoading(): void {
-    if (this.backgroundLoaderActive) {
-      // 保持并发数稳定：每完成一个任务，立即补一个新任务
-      this.loadNextImage();
+  private onZoomStarted(): void {
+  }
+
+  private onZoomStopped(): void {
+    if (this.isZoomed !== this.zoomScale > 1.0) {
+      this.isZoomed = this.zoomScale > 1.0;
     }
   }
 
@@ -405,41 +469,70 @@ struct ImageViewerPage {
         .justifyContent(FlexAlign.Center)
         .backgroundColor('#1A1A1A')
       } else {
-        // 垂直滚动图片列表（LazyForEach 懒加载，避免大量图片同时渲染）
-        List({ scroller: this.listScroller }) {
-          LazyForEach(this.imageDataSource, (img: JmImageInfo, index: number) => {
-            ListItem() {
-              if (this.decodedPixelMaps[index]) {
-                Image(this.decodedPixelMaps[index])
-                  .width('100%')
-                  .objectFit(ImageFit.Contain)
-                  .backgroundColor('#FFFFFF')
-              } else {
-                Image($r('app.media.loading'))
-                  .width('100%')
-                  .objectFit(ImageFit.Contain)
-                  .backgroundColor('#FFFFFF')
+        Scroll(this.scrollScroller) {
+          List({ scroller: this.listScroller }) {
+            LazyForEach(this.imageDataSource, (img: JmImageInfo, index: number) => {
+              ListItem() {
+                if (this.decodedPixelMaps[index]) {
+                  Image(this.decodedPixelMaps[index])
+                    .width('100%')
+                    .objectFit(ImageFit.Contain)
+                    .backgroundColor('#FFFFFF')
+                } else {
+                  Image($r('app.media.loading'))
+                    .width('100%')
+                    .objectFit(ImageFit.Contain)
+                    .backgroundColor('#FFFFFF')
+                }
               }
-            }
-            .width('100%')
-            .onAppear(() => {
-              this.decodeImageAtIndex(index);
-              // 预解码下一张
-              if (index + 1 < this.totalImages) {
-                this.decodeImageAtIndex(index + 1);
-              }
-            })
-          }, (img: JmImageInfo, index: number) => `${index}`)
+              .width('100%')
+              .onAppear(() => {
+                this.currentVisibleIndex = index;
+                this.loadPixelMap(index);
+                this.preloadNearbyPixelMaps(index);
+              })
+              .onDisAppear(() => {
+                let pm = this.decodedPixelMaps[index];
+                if (pm) {
+                  pm.release();
+                  this.decodedPixelMaps.splice(index, 1, null);
+                }
+              })
+            }, (img: JmImageInfo, index: number) => `${index}`)
+          }
+          .listDirection(Axis.Vertical)
+          .scrollBar(BarState.Off)
+          .cachedCount(10)
+          .width('100%')
+          .height('100%')
+          .nestedScroll({
+            scrollForward: NestedScrollMode.PARENT_FIRST,
+            scrollBackward: NestedScrollMode.PARENT_FIRST
+          })
         }
-        .listDirection(Axis.Vertical)
-        .scrollBar(BarState.Off)
-        .cachedCount(2)
-        .onScrollIndex((firstVisible: number, _: number) => {
-          this.currentVisibleIndex = firstVisible;
-        })
-        .onClick(() => this.toggleControls())
         .width('100%')
         .height('100%')
+        .scrollable(ScrollDirection.FREE)
+        .maxZoomScale(3.0)
+        .minZoomScale(1.0)
+        .zoomScale(this.zoomScale)
+        .enableBouncesZoom(true)
+        .edgeEffect(EdgeEffect.None)
+        .scrollBar(BarState.Off)
+        .onZoomStart(() => {
+          this.onZoomStarted();
+        })
+        .onDidZoom((scale: number) => {
+          this.zoomScale = scale;
+          let zoomed = scale > 1.0;
+          if (this.isZoomed !== zoomed) {
+            this.isZoomed = zoomed;
+          }
+        })
+        .onZoomStop(() => {
+          this.onZoomStopped();
+        })
+        .onClick(() => this.toggleControls())
 
         // ── 悬浮顶部工具栏 ──
         if (this.showControls) {
@@ -458,7 +551,6 @@ struct ImageViewerPage {
               .layoutWeight(1)
               .margin({ left: 8, right: 8 })
 
-            // 占位保持标题居中
             SymbolGlyph($r('sys.symbol.chevron_left'))
               .fontSize(24)
               .fontColor(['#00000000'])
