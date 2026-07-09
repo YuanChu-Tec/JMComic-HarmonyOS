@@ -1,5 +1,7 @@
 import { router, display, promptAction } from '@kit.ArkUI';
+import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
+import { fileIo } from '@kit.CoreFileKit';
 import { ApiService } from '../network/ApiService';
 import { AlbumViewModel, JmAlbumInfo, JmPromoteSection, SearchResultData, IAlbumViewModelJSON,
   CommentInfo, CommentPageData, parseCommentRaw,
@@ -266,6 +268,41 @@ struct ProfilePage {
     this.favNeedLoad = false;
   }
 
+  onClearCache(): void {
+    try {
+      let context = getContext() as common.UIAbilityContext;
+      let dirs = [context.cacheDir, context.filesDir];
+      let count = 0;
+      for (let dir of dirs) {
+        this.deleteDirRecursive(dir);
+        count++;
+      }
+      try { promptAction.showToast({ message: '缓存已清理', duration: 2000 }); } catch (_e) {}
+    } catch (e) {
+      console.error('[Index] clear cache error:', JSON.stringify(e));
+      try { promptAction.showToast({ message: '清理失败', duration: 2000 }); } catch (_e) {}
+    }
+  }
+
+  private deleteDirRecursive(dirPath: string): void {
+    try {
+      if (!fileIo.accessSync(dirPath)) return;
+      let names = fileIo.listFileSync(dirPath);
+      for (let name of names) {
+        let fullPath = dirPath + '/' + name;
+        let stat = fileIo.statSync(fullPath);
+        if (stat.isDirectory()) {
+          this.deleteDirRecursive(fullPath);
+          fileIo.rmdirSync(fullPath);
+        } else {
+          fileIo.unlinkSync(fullPath);
+        }
+      }
+    } catch (e) {
+      console.warn(`[Index] deleteDir ${dirPath} error:`, JSON.stringify(e));
+    }
+  }
+
   async loadFavorites(): Promise<void> {
     if (this.favIsLoading) return;
     this.favIsLoading = true;
@@ -410,18 +447,35 @@ struct ProfilePage {
           .borderRadius(12)
           .margin({ top: 16 })
 
-          // 退出按钮
-          Button({ type: ButtonType.Normal }) {
-            Text('退出登录')
-              .fontSize(15)
-              .fontColor('#FF5A5F')
+          // 操作按钮
+          Row({ space: 12 }) {
+            // 退出按钮
+            Button({ type: ButtonType.Normal }) {
+              Text('退出登录')
+                .fontSize(15)
+                .fontColor('#FF5A5F')
+            }
+            .backgroundColor('#FFF0F0')
+            .borderRadius(22)
+            .layoutWeight(1)
+            .height(44)
+            .onClick(() => this.onLogout())
+
+            // 清理缓存（登录态）
+            Button({ type: ButtonType.Normal }) {
+              Text('清理缓存')
+                .fontSize(15)
+                .fontColor('#666666')
+            }
+            .backgroundColor('#F5F5F5')
+            .borderRadius(22)
+            .layoutWeight(1)
+            .height(44)
+            .onClick(() => this.onClearCache())
           }
-          .backgroundColor('#FFF0F0')
-          .borderRadius(22)
-          .width(200)
-          .height(44)
+          .width('80%')
+          .justifyContent(FlexAlign.Center)
           .margin({ top: 24 })
-          .onClick(() => this.onLogout())
 
           // ── 收藏/历史列表 ──
           Tabs({ controller: this.tabsController, barPosition: BarPosition.Start }) {
@@ -636,6 +690,19 @@ struct ProfilePage {
           .borderRadius(12)
           .margin({ top: 16 })
           .onClick(() => this.onLogin())
+
+          // 清理缓存（未登录态）
+          Button({ type: ButtonType.Normal }) {
+            Text('清理缓存')
+              .fontSize(15)
+              .fontColor('#666666')
+          }
+          .backgroundColor('#F5F5F5')
+          .borderRadius(22)
+          .width('80%')
+          .height(44)
+          .margin({ top: 16 })
+          .onClick(() => this.onClearCache())
         }
       }
       .width('100%')
