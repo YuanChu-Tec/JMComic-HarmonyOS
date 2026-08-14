@@ -53,20 +53,20 @@ export struct CommentItemComponent {
               .height(48)
               .borderRadius(24)
               .objectFit(ImageFit.Cover)
-              .backgroundColor('#F0F0F0')
+              .backgroundColor($r('app.color.bg_secondary'))
           } else {
             Image($r('app.media.ic_default_avatar'))
               .width(48)
               .height(48)
               .borderRadius(24)
               .objectFit(ImageFit.Cover)
-              .backgroundColor('#F0F0F0')
+              .backgroundColor($r('app.color.bg_secondary'))
           }
 
           // 等级
           Text(this.comment.level ? `Lv${this.comment.level}` : '')
             .fontSize(11)
-            .fontColor('#FF5A5F')
+            .fontColor($r('app.color.brand'))
             .width(56)
             .textAlign(TextAlign.Center)
             .margin({ top: 4 })
@@ -81,14 +81,14 @@ export struct CommentItemComponent {
             Text(this.comment.name)
               .fontSize(14)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#333333')
+              .fontColor($r('app.color.text_primary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
             if (this.comment.title) {
               Text(`·${this.comment.title}`)
                 .fontSize(14)
-                .fontColor('#FF8A5C')
+                .fontColor($r('app.color.text_accent_warm'))
             }
 
             Blank()
@@ -96,14 +96,14 @@ export struct CommentItemComponent {
             // 日期显示在右上角
             Text(this.comment.date ? this.comment.date.substring(0, 10) : '')
               .fontSize(10)
-              .fontColor('#999999')
+              .fontColor($r('app.color.text_tertiary'))
           }
           .width('100%')
 
           // 评论内容
           Text(this.comment.content)
             .fontSize(14)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_primary'))
             .lineHeight(22)
             .margin({ top: 6 })
             .width('100%')
@@ -113,10 +113,10 @@ export struct CommentItemComponent {
             Row() {
               SymbolGlyph($r('sys.symbol.heart'))
                 .fontSize(14)
-                .fontColor(['#999999'])
+                .fontColor([$r('app.color.text_tertiary')])
               Text(`${this.comment.like}`)
                 .fontSize(12)
-                .fontColor('#999999')
+                .fontColor($r('app.color.text_tertiary'))
                 .margin({ left: 3 })
             }
 
@@ -126,7 +126,7 @@ export struct CommentItemComponent {
             if (this.comment.linkBookId && this.comment.linkBookName) {
               Text(this.comment.linkBookName)
                 .fontSize(10)
-                .fontColor('#FF5A5F')
+                .fontColor($r('app.color.brand'))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .onClick(this.linkClickable ? () => this.onLinkClick() : undefined)
@@ -156,21 +156,21 @@ export struct CommentItemComponent {
                     .height(32)
                     .borderRadius(16)
                     .objectFit(ImageFit.Cover)
-                    .backgroundColor('#F0F0F0')
+                    .backgroundColor($r('app.color.bg_secondary'))
                 } else {
                   Image($r('app.media.ic_default_avatar'))
                     .width(32)
                     .height(32)
                     .borderRadius(16)
                     .objectFit(ImageFit.Cover)
-                    .backgroundColor('#F0F0F0')
+                    .backgroundColor($r('app.color.bg_secondary'))
                 }
 
                 // 等级
                 if (sub.level) {
                   Text(`Lv${sub.level}`)
                     .fontSize(10)
-                    .fontColor('#FF5A5F')
+                    .fontColor($r('app.color.brand'))
                     .margin({ top: 2 })
                 }
               }
@@ -184,14 +184,14 @@ export struct CommentItemComponent {
                   Text(sub.name)
                     .fontSize(13)
                     .fontWeight(FontWeight.Medium)
-                    .fontColor('#666666')
+                    .fontColor($r('app.color.text_secondary'))
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
 
                   if (sub.title) {
                     Text(`·${sub.title}`)
                       .fontSize(13)
-                      .fontColor('#FF8A5C')
+                      .fontColor($r('app.color.text_accent_warm'))
                   }
 
                   Blank()
@@ -199,14 +199,14 @@ export struct CommentItemComponent {
                   // 日期显示在右上角
                   Text(sub.date ? sub.date.substring(0, 10) : '')
                     .fontSize(10)
-                    .fontColor('#999999')
+                    .fontColor($r('app.color.text_tertiary'))
                 }
                 .width('100%')
 
                 // 评论内容
                 Text(sub.content)
                   .fontSize(13)
-                  .fontColor('#555555')
+                  .fontColor($r('app.color.text_gray'))
                   .lineHeight(20)
                   .margin({ top: 4 })
                   .width('100%')
@@ -219,10 +219,10 @@ export struct CommentItemComponent {
                     Row() {
                       SymbolGlyph($r('sys.symbol.heart'))
                         .fontSize(12)
-                        .fontColor(['#999999'])
+                        .fontColor([$r('app.color.text_tertiary')])
                       Text(`${sub.like}`)
                         .fontSize(11)
-                        .fontColor('#999999')
+                        .fontColor($r('app.color.text_tertiary'))
                         .margin({ left: 2 })
                     }
                   }
@@ -236,7 +236,7 @@ export struct CommentItemComponent {
             }
             .width('100%')
             .padding(10)
-            .backgroundColor('#F8F8F8')
+            .backgroundColor($r('app.color.bg_page_alt'))
             .borderRadius(6)
             .margin({ top: 6 })
             .alignItems(VerticalAlign.Top)
@@ -254,14 +254,14 @@ export struct CommentItemComponent {
           .layoutWeight(1)
           .height(36)
           .fontSize(13)
-          .backgroundColor('#F5F5F5')
+          .backgroundColor($r('app.color.bg_page'))
           .borderRadius(18)
           .padding({ left: 14, right: 14 })
           .onChange((value: string) => { this.replyText = value; })
 
         Text('发送')
           .fontSize(13)
-          .fontColor('#FF5A5F')
+          .fontColor($r('app.color.brand'))
           .padding({ left: 10, right: 4 })
           .onClick(() => this.doSendReply())
       }
@@ -272,7 +272,7 @@ export struct CommentItemComponent {
     .width('100%')
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
     .alignItems(HorizontalAlign.Start)
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.bg_card'))
     .borderRadius(8)
   }
 }

@@ -36,11 +36,11 @@ export function buildExpandedMenu(
             if (menuItem.title) {
               Text(menuItem.title)
                 .fontSize(12)
-                .fontColor('#999999')
+                .fontColor($r('app.color.text_tertiary'))
             }
             Text(menuItem.text)
               .fontSize(13)
-              .fontColor('#333333')
+              .fontColor($r('app.color.text_primary'))
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .wordBreak(WordBreak.BREAK_ALL)
@@ -56,13 +56,13 @@ export function buildExpandedMenu(
             Row()
               .width(1)
               .height('70%')
-              .backgroundColor('#F2F2F7')
+              .backgroundColor($r('app.color.tab_bar_bg'))
           }
         }, (menuItem: MenuItem, itemIndex: number) => itemIndex.toString())
       }
     }
     .width(300)
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.bg_card'))
     .borderRadius(12)
     .shadow({
       radius: 16,
@@ -120,18 +120,18 @@ export function buildRouteMenu(
             Column({ space: 2 }) {
               Text(col.title)
                 .fontSize(12)
-                .fontColor('#999999')
+                .fontColor($r('app.color.text_tertiary'))
                 .width('100%')
               // 自动选项
               Row() {
                 Text('自动')
                   .fontSize(12)
-                  .fontColor(col.selectedIndex < 0 ? '#007AFF' : '#333333')
+                  .fontColor(col.selectedIndex < 0 ? $r('app.color.tab_active') : $r('app.color.text_primary'))
                   .fontWeight(col.selectedIndex < 0 ? FontWeight.Bold : FontWeight.Normal)
                 if (col.selectedIndex < 0) {
                   Text(' ✓')
                     .fontSize(12)
-                    .fontColor('#007AFF')
+                    .fontColor($r('app.color.tab_active'))
                 }
               }
               .width('100%')
@@ -143,18 +143,18 @@ export function buildRouteMenu(
               Row()
                 .width('100%')
                 .height(0.5)
-                .backgroundColor('#F2F2F7')
+                .backgroundColor($r('app.color.tab_bar_bg'))
               // 各线路
               ForEach(col.routes, (route: string, routeIndex: number) => {
                 Row() {
                   Text(`线路${routeIndex + 1}`)
                     .fontSize(12)
-                    .fontColor(col.selectedIndex === routeIndex ? '#007AFF' : '#333333')
+                    .fontColor(col.selectedIndex === routeIndex ? $r('app.color.tab_active') : $r('app.color.text_primary'))
                     .fontWeight(col.selectedIndex === routeIndex ? FontWeight.Bold : FontWeight.Normal)
                   if (col.selectedIndex === routeIndex) {
                     Text(' ✓')
                       .fontSize(12)
-                      .fontColor('#007AFF')
+                      .fontColor($r('app.color.tab_active'))
                   }
                 }
                 .width('100%')
@@ -165,7 +165,7 @@ export function buildRouteMenu(
                 })
                 Text(route)
                   .fontSize(11)
-                  .fontColor('#999999')
+                  .fontColor($r('app.color.text_tertiary'))
                   .maxLines(2)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .wordBreak(WordBreak.BREAK_ALL)
@@ -175,7 +175,7 @@ export function buildRouteMenu(
                   Row()
                     .width('100%')
                     .height(0.5)
-                    .backgroundColor('#F2F2F7')
+                    .backgroundColor($r('app.color.tab_bar_bg'))
                 }
               }, (route: string, routeIndex: number) => `${colIndex}-${routeIndex}`)
             }
@@ -190,7 +190,7 @@ export function buildRouteMenu(
             Row()
               .width(1)
               .height('100%')
-              .backgroundColor('#F2F2F7')
+              .backgroundColor($r('app.color.tab_bar_bg'))
           }
         }, (col: RouteColumn, colIndex: number) => colIndex.toString())
       }
@@ -198,7 +198,7 @@ export function buildRouteMenu(
     }
     .width(320)
     .height(220)
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.bg_card'))
     .borderRadius(12)
     .shadow({
       radius: 16,

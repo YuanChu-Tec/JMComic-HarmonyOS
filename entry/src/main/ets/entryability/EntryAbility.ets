@@ -1,18 +1,20 @@
-import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
+import { AbilityConstant, Configuration, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { ThemeManager } from '../common/ThemeManager';
 
 const DOMAIN = 0x0000;
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
-    try {
-      this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
-    } catch (err) {
-      hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
-    }
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+  }
+
+  onConfigurationUpdate(config: Configuration): void {
+    // 系统深色/浅色切换时，若用户选择了「跟随系统」则同步更新应用主题
+    ThemeManager.getInstance().onSystemConfigurationChange();
+    hilog.info(DOMAIN, 'testTag', 'onConfigurationUpdate');
   }
 
   onDestroy(): void {
@@ -49,12 +51,15 @@ export default class EntryAbility extends UIAbility {
       hilog.info(DOMAIN, 'testTag', `topSafeHeight=${topHeight}, bottomSafeHeight=${bottomHeight}`);
     });
 
-    windowStage.loadContent('pages/Index', (err) => {
-      if (err.code) {
-        hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
-        return;
-      }
-      hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+    // 先应用用户保存的主题（跟随系统/浅色/深色），再加载页面
+    ThemeManager.getInstance().init().finally(() => {
+      windowStage.loadContent('pages/Index', (err) => {
+        if (err.code) {
+          hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
+          return;
+        }
+        hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+      });
     });
   }
 

@@ -19,7 +19,7 @@ struct AboutPage {
         Button({ type: ButtonType.Normal }) {
           SymbolGlyph($r('sys.symbol.chevron_left'))
             .fontSize(22)
-            .fontColor(['#333333'])
+            .fontColor([$r('app.color.text_primary')])
         }
         .backgroundColor(Color.Transparent)
         .width(36)
@@ -29,14 +29,14 @@ struct AboutPage {
         Text('防失联')
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
           .textAlign(TextAlign.Center)
           .margin({ right: 36 })
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: this.topSafeHeight + 12, bottom: 12 })
-      .backgroundColor('#FFFFFF')
+      .backgroundColor($r('app.color.bg_card'))
 
       // ── 内容区 ──
       Scroll() {
@@ -47,26 +47,26 @@ struct AboutPage {
             Text('官方')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#333333')
+              .fontColor($r('app.color.text_primary'))
               .margin({ bottom: 16 })
 
             Row() {
               Text('官网')
                 .fontSize(14)
-                .fontColor('#666666')
+                .fontColor($r('app.color.text_secondary'))
                 .width(80)
 
               Text('18comic.vip')
                 .fontSize(14)
-                .fontColor('#FF5A5F')
+                .fontColor($r('app.color.brand'))
                 .layoutWeight(1)
-                .decoration({ type: TextDecorationType.Underline, color: '#FF5A5F' })
+                .decoration({ type: TextDecorationType.Underline, color: $r('app.color.brand') })
                 .onClick(() => this.openUrl('https://18comic.vip'))
 
               Button('复制')
                 .fontSize(12)
-                .fontColor('#FF5A5F')
-                .backgroundColor('#FFF0F0')
+                .fontColor($r('app.color.brand'))
+                .backgroundColor($r('app.color.brand_bg'))
                 .borderRadius(12)
                 .height(28)
                 .padding({ left: 10, right: 10 })
@@ -78,20 +78,20 @@ struct AboutPage {
             Row() {
               Text('备用')
                 .fontSize(14)
-                .fontColor('#666666')
+                .fontColor($r('app.color.text_secondary'))
                 .width(80)
 
               Text('18comic.org')
                 .fontSize(14)
-                .fontColor('#FF5A5F')
+                .fontColor($r('app.color.brand'))
                 .layoutWeight(1)
-                .decoration({ type: TextDecorationType.Underline, color: '#FF5A5F' })
+                .decoration({ type: TextDecorationType.Underline, color: $r('app.color.brand') })
                 .onClick(() => this.openUrl('https://18comic.org'))
 
               Button('复制')
                 .fontSize(12)
-                .fontColor('#FF5A5F')
-                .backgroundColor('#FFF0F0')
+                .fontColor($r('app.color.brand'))
+                .backgroundColor($r('app.color.brand_bg'))
                 .borderRadius(12)
                 .height(28)
                 .padding({ left: 10, right: 10 })
@@ -103,20 +103,20 @@ struct AboutPage {
             Row() {
               Text('纸飞机')
                 .fontSize(14)
-                .fontColor('#666666')
+                .fontColor($r('app.color.text_secondary'))
                 .width(80)
 
               Text('https://t.me/JM_comic')
                 .fontSize(14)
-                .fontColor('#FF5A5F')
+                .fontColor($r('app.color.brand'))
                 .layoutWeight(1)
-                .decoration({ type: TextDecorationType.Underline, color: '#FF5A5F' })
+                .decoration({ type: TextDecorationType.Underline, color: $r('app.color.brand') })
                 .onClick(() => this.openUrl('https://t.me/JM_comic'))
 
               Button('复制')
                 .fontSize(12)
-                .fontColor('#FF5A5F')
-                .backgroundColor('#FFF0F0')
+                .fontColor($r('app.color.brand'))
+                .backgroundColor($r('app.color.brand_bg'))
                 .borderRadius(12)
                 .height(28)
                 .padding({ left: 10, right: 10 })
@@ -127,7 +127,7 @@ struct AboutPage {
           }
           .width('100%')
           .padding(20)
-          .backgroundColor('#FFFFFF')
+          .backgroundColor($r('app.color.bg_card'))
           .borderRadius(12)
           .margin({ top: 20 })
 
@@ -136,26 +136,26 @@ struct AboutPage {
             Text('我的')
               .fontSize(16)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#333333')
+              .fontColor($r('app.color.text_primary'))
               .margin({ bottom: 16 })
 
             Row() {
               Text('GitHub')
                 .fontSize(14)
-                .fontColor('#666666')
+                .fontColor($r('app.color.text_secondary'))
                 .width(80)
 
               Text('https://github.com/YuanChu-Tec/JMComic-HarmonyOS')
                 .fontSize(14)
-                .fontColor('#FF5A5F')
+                .fontColor($r('app.color.brand'))
                 .layoutWeight(1)
-                .decoration({ type: TextDecorationType.Underline, color: '#FF5A5F' })
+                .decoration({ type: TextDecorationType.Underline, color: $r('app.color.brand') })
                 .onClick(() => this.openUrl('https://github.com/YuanChu-Tec/JMComic-HarmonyOS'))
 
               Button('复制')
                 .fontSize(12)
-                .fontColor('#FF5A5F')
-                .backgroundColor('#FFF0F0')
+                .fontColor($r('app.color.brand'))
+                .backgroundColor($r('app.color.brand_bg'))
                 .borderRadius(12)
                 .height(28)
                 .padding({ left: 10, right: 10 })
@@ -167,18 +167,18 @@ struct AboutPage {
             Row() {
               Text('企鹅')
                 .fontSize(14)
-                .fontColor('#666666')
+                .fontColor($r('app.color.text_secondary'))
                 .width(80)
 
               Text('1075753335')
                 .fontSize(14)
-                .fontColor('#333333')
+                .fontColor($r('app.color.text_primary'))
                 .layoutWeight(1)
 
               Button('复制')
                 .fontSize(12)
-                .fontColor('#FF5A5F')
-                .backgroundColor('#FFF0F0')
+                .fontColor($r('app.color.brand'))
+                .backgroundColor($r('app.color.brand_bg'))
                 .borderRadius(12)
                 .height(28)
                 .padding({ left: 10, right: 10 })
@@ -190,20 +190,20 @@ struct AboutPage {
             Row() {
               Text('纸飞机')
                 .fontSize(14)
-                .fontColor('#666666')
+                .fontColor($r('app.color.text_secondary'))
                 .width(80)
 
               Text('https://t.me/HMTGchat')
                 .fontSize(14)
-                .fontColor('#FF5A5F')
+                .fontColor($r('app.color.brand'))
                 .layoutWeight(1)
-                .decoration({ type: TextDecorationType.Underline, color: '#FF5A5F' })
+                .decoration({ type: TextDecorationType.Underline, color: $r('app.color.brand') })
                 .onClick(() => this.openUrl('https://t.me/HMTGchat'))
 
               Button('复制')
                 .fontSize(12)
-                .fontColor('#FF5A5F')
-                .backgroundColor('#FFF0F0')
+                .fontColor($r('app.color.brand'))
+                .backgroundColor($r('app.color.brand_bg'))
                 .borderRadius(12)
                 .height(28)
                 .padding({ left: 10, right: 10 })
@@ -214,7 +214,7 @@ struct AboutPage {
           }
           .width('100%')
           .padding(20)
-          .backgroundColor('#FFFFFF')
+          .backgroundColor($r('app.color.bg_card'))
           .borderRadius(12)
           .margin({ top: 16 })
 
@@ -230,7 +230,7 @@ struct AboutPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F5F5F5')
+    .backgroundColor($r('app.color.bg_page'))
   }
 
   openUrl(url: string): void {

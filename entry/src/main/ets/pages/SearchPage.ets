@@ -163,10 +163,10 @@ struct SearchPage {
             LoadingProgress()
               .width(40)
               .height(40)
-              .color('#FF5A5F')
+              .color($r('app.color.brand'))
             Text('搜索中...')
               .fontSize(14)
-              .fontColor('#999999')
+              .fontColor($r('app.color.text_tertiary'))
               .margin({ top: 12 })
           }
           .width('100%')
@@ -176,10 +176,10 @@ struct SearchPage {
           Column() {
             SymbolGlyph($r('sys.symbol.magnifyingglass'))
               .fontSize(48)
-              .fontColor(['#CCCCCC'])
+              .fontColor([$r('app.color.text_disabled')])
             Text('未找到相关漫画')
               .fontSize(16)
-              .fontColor('#999999')
+              .fontColor($r('app.color.text_tertiary'))
               .margin({ top: 12 })
           }
           .width('100%')
@@ -194,12 +194,12 @@ struct SearchPage {
                   Text('搜索历史')
                     .fontSize(14)
                     .fontWeight(FontWeight.Medium)
-                    .fontColor('#333333')
+                    .fontColor($r('app.color.text_primary'))
                     .layoutWeight(1)
 
                   Text('清空')
                     .fontSize(13)
-                    .fontColor('#999999')
+                    .fontColor($r('app.color.text_tertiary'))
                     .onClick(() => {
                       if (this.cache) {
                         this.cache.clearSearchHistory();
@@ -214,9 +214,9 @@ struct SearchPage {
                   ForEach(this.searchHistory, (item: string) => {
                     Text(item)
                       .fontSize(13)
-                      .fontColor('#666666')
+                      .fontColor($r('app.color.text_secondary'))
                       .padding({ left: 14, right: 14, top: 7, bottom: 7 })
-                      .backgroundColor('#F5F5F5')
+                      .backgroundColor($r('app.color.bg_page'))
                       .borderRadius(16)
                       .margin({ right: 8, bottom: 8 })
                       .onClick(() => {
@@ -232,10 +232,10 @@ struct SearchPage {
             } else {
               SymbolGlyph($r('sys.symbol.magnifyingglass'))
                 .fontSize(48)
-                .fontColor(['#DDDDDD'])
+                .fontColor([$r('app.color.text_disabled')])
               Text('输入关键词搜索漫画')
                 .fontSize(15)
-                .fontColor('#BBBBBB')
+                .fontColor($r('app.color.text_disabled'))
                 .margin({ top: 12 })
             }
           }
@@ -264,10 +264,10 @@ struct SearchPage {
                   LoadingProgress()
                     .width(24)
                     .height(24)
-                    .color('#FF5A5F')
+                    .color($r('app.color.brand'))
                   Text('加载更多...')
                     .fontSize(13)
-                    .fontColor('#999999')
+                    .fontColor($r('app.color.text_tertiary'))
                     .margin({ left: 8 })
                 }
                 .width('100%')
@@ -276,7 +276,7 @@ struct SearchPage {
               } else if (!this.hasMore) {
                 Text('没有更多了')
                   .fontSize(13)
-                  .fontColor('#CCCCCC')
+                  .fontColor($r('app.color.text_disabled'))
                   .width('100%')
                   .textAlign(TextAlign.Center)
                   .padding({ top: 16, bottom: 16 })
@@ -294,13 +294,13 @@ struct SearchPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor('#FFFFFF')
+      .backgroundColor($r('app.color.bg_card'))
 
       // ── 搜索栏（浮层 + 毛玻璃） ──
       Row() {
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(24)
-          .fontColor(['#333333'])
+          .fontColor([$r('app.color.text_primary')])
           .onClick(() => this.onBack())
 
         Stack({ alignContent: Alignment.End }) {
@@ -308,7 +308,7 @@ struct SearchPage {
             .width('100%')
             .height(40)
             .fontSize(15)
-            .backgroundColor('#F5F5F5')
+            .backgroundColor($r('app.color.bg_page'))
             .borderRadius(20)
             .padding({ left: 16, right: 36 })
             .onChange((value: string) => {
@@ -322,7 +322,7 @@ struct SearchPage {
             // 推荐写法：使用 SymbolGlyph
             SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
               .fontSize(18)                 // 对应之前的 .width() .height()
-              .fontColor(['#B3B3B3'])       // 注意：fontColor 接收数组
+              .fontColor([$r('app.color.text_disabled')])       // 注意：fontColor 接收数组
               .margin({ right: 13 })
               .onClick(() => {
                 this.keyword = '';
@@ -334,20 +334,20 @@ struct SearchPage {
 
         Text('搜索')
           .fontSize(15)
-          .fontColor('#FF5A5F')
+          .fontColor($r('app.color.brand'))
           .fontWeight(FontWeight.Medium)
           .onClick(() => this.doSearch())
       }
       .position({ x: 0, y: 0 })
       .width('100%')
       .padding({ left: 12, right: 16, top: this.topSafeHeight + 8, bottom: 4 })
-      .backgroundColor('rgba(255, 255, 255, 0.85)')
+      .backgroundColor($r('app.color.header_bg'))
       .backdropBlur(20)
       .zIndex(10)
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.bg_card'))
   }
 
   @Builder
@@ -359,14 +359,14 @@ struct SearchPage {
         .aspectRatio(0.72)
         .objectFit(ImageFit.Cover)
         .borderRadius({ topLeft: 8, topRight: 8 })
-        .backgroundColor('#F0F0F0')
+        .backgroundColor($r('app.color.bg_secondary'))
 
       // 信息区
       Column() {
         Text(album.name)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_primary'))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .lineHeight(18)
@@ -376,7 +376,7 @@ struct SearchPage {
         Row() {
           Text(album.author)
             .fontSize(11)
-            .fontColor('#999999')
+            .fontColor($r('app.color.text_tertiary'))
             .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -384,7 +384,7 @@ struct SearchPage {
           if (album.totalViews && album.totalViews !== '0') {
             Text(`${album.totalViews} 次`)
               .fontSize(10)
-              .fontColor('#CCCCCC')
+              .fontColor($r('app.color.text_disabled'))
           }
         }
         .width('100%')
@@ -395,11 +395,11 @@ struct SearchPage {
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.bg_card'))
     .borderRadius(8)
     .shadow({
       radius: 4,
-      color: '#10000000',
+      color: $r('app.color.scrim'),
       offsetX: 0,
       offsetY: 2
     })

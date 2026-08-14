@@ -114,7 +114,7 @@ struct LoginPage {
         Button({ type: ButtonType.Normal }) {
           Text('←')
             .fontSize(20)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_primary'))
         }
         .backgroundColor(Color.Transparent)
         .width(40)
@@ -124,7 +124,7 @@ struct LoginPage {
         Text('账号')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
           .textAlign(TextAlign.Center)
 
@@ -133,9 +133,9 @@ struct LoginPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: this.topSafeHeight + 8, bottom: 4 })
-      .backgroundColor('#FFFFFF')
+      .backgroundColor($r('app.color.bg_card'))
 
-      Divider().height(1).color('#F0F0F0')
+      Divider().height(1).color($r('app.color.divider'))
 
       // ── 登录表单 ──
       Column() {
@@ -143,12 +143,12 @@ struct LoginPage {
         Text('JMComic')
           .fontSize(28)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#FF5A5F')
+          .fontColor($r('app.color.brand'))
           .margin({ top: 40, bottom: 8 })
 
         Text('登录以使用完整功能')
           .fontSize(14)
-          .fontColor('#999999')
+          .fontColor($r('app.color.text_tertiary'))
           .margin({ bottom: 32 })
 
         // 用户名输入
@@ -156,7 +156,7 @@ struct LoginPage {
           .width('85%')
           .height(48)
           .fontSize(15)
-          .backgroundColor('#F5F5F5')
+          .backgroundColor($r('app.color.bg_page'))
           .borderRadius(10)
           .padding({ left: 16, right: 16 })
           .onChange((value: string) => this.username = value)
@@ -166,7 +166,7 @@ struct LoginPage {
           .width('85%')
           .height(48)
           .fontSize(15)
-          .backgroundColor('#F5F5F5')
+          .backgroundColor($r('app.color.bg_page'))
           .borderRadius(10)
           .padding({ left: 16, right: 16 })
           .type(InputType.Password)
@@ -176,12 +176,12 @@ struct LoginPage {
         // 记住密码
         Row() {
           Toggle({ type: ToggleType.Switch, isOn: this.savePassword })
-            .selectedColor('#FF5A5F')
+            .selectedColor($r('app.color.brand'))
             .onChange((checked: boolean) => this.savePassword = checked)
 
           Text('记住密码')
             .fontSize(13)
-            .fontColor('#999999')
+            .fontColor($r('app.color.text_tertiary'))
             .margin({ left: 8 })
         }
         .width('85%')
@@ -192,7 +192,7 @@ struct LoginPage {
         if (this.errorMsg) {
           Text(this.errorMsg)
             .fontSize(13)
-            .fontColor('#FF5A5F')
+            .fontColor($r('app.color.brand'))
             .margin({ top: 12 })
         }
 
@@ -202,16 +202,16 @@ struct LoginPage {
             LoadingProgress()
               .width(20)
               .height(20)
-              .color('#FFFFFF')
+              .color($r('app.color.text_on_accent'))
           } else {
             Text('登  录')
               .fontSize(16)
-              .fontColor('#FFFFFF')
+              .fontColor($r('app.color.text_on_accent'))
           }
         }
         .width('85%')
         .height(48)
-        .backgroundColor(this.isLoading ? '#FF9E9E' : '#FF5A5F')
+        .backgroundColor(this.isLoading ? $r('app.color.brand_disabled') : $r('app.color.brand'))
         .borderRadius(24)
         .margin({ top: 24 })
         .onClick(() => this.onLogin())
@@ -223,6 +223,6 @@ struct LoginPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.bg_card'))
   }
 }
