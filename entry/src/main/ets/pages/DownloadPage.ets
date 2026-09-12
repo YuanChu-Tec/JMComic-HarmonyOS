@@ -43,23 +43,34 @@ struct DownloadPage {
     this.downloadService.removeTask(taskId);
   }
 
-  getProgressColor(status: DownloadStatus): string {
+  getProgressColor(status: DownloadStatus): Resource {
     switch (status) {
-      case DownloadStatus.DOWNLOADING: return '#4CAF50';
-      case DownloadStatus.PAUSED: return '#FF9800';
-      case DownloadStatus.DONE: return '#2196F3';
-      case DownloadStatus.ERROR: return '#FF5A5F';
-      default: return '#CCCCCC';
+      case DownloadStatus.DOWNLOADING: return $r('app.color.status_done');
+      case DownloadStatus.PAUSED: return $r('app.color.status_wait');
+      case DownloadStatus.DONE: return $r('app.color.status_downloading');
+      case DownloadStatus.ERROR: return $r('app.color.brand');
+      default: return $r('app.color.text_disabled');
     }
   }
 
-  getStatusColor(status: DownloadStatus): string {
+  getStatusColor(status: DownloadStatus): Resource {
     switch (status) {
-      case DownloadStatus.DOWNLOADING: return '#4CAF50';
-      case DownloadStatus.PAUSED: return '#FF9800';
-      case DownloadStatus.DONE: return '#2196F3';
-      case DownloadStatus.ERROR: return '#FF5A5F';
-      default: return '#999999';
+      case DownloadStatus.DOWNLOADING: return $r('app.color.status_done');
+      case DownloadStatus.PAUSED: return $r('app.color.status_wait');
+      case DownloadStatus.DONE: return $r('app.color.status_downloading');
+      case DownloadStatus.ERROR: return $r('app.color.brand');
+      default: return $r('app.color.text_tertiary');
+    }
+  }
+
+  /** 状态标签的淡色背景 */
+  getStatusBgColor(status: DownloadStatus): Resource {
+    switch (status) {
+      case DownloadStatus.DOWNLOADING: return $r('app.color.status_done_bg');
+      case DownloadStatus.PAUSED: return $r('app.color.status_wait_bg');
+      case DownloadStatus.DONE: return $r('app.color.status_downloading_bg');
+      case DownloadStatus.ERROR: return $r('app.color.brand_bg');
+      default: return $r('app.color.bg_secondary');
     }
   }
 
@@ -75,7 +86,7 @@ struct DownloadPage {
         Button({ type: ButtonType.Normal }) {
           Text('←')
             .fontSize(20)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_primary'))
         }
         .backgroundColor(Color.Transparent)
         .width(40)
@@ -85,7 +96,7 @@ struct DownloadPage {
         Text('下载管理')
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
           .textAlign(TextAlign.Center)
 
@@ -94,29 +105,29 @@ struct DownloadPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: this.topSafeHeight + 8, bottom: 4 })
-      .backgroundColor('#FFFFFF')
+      .backgroundColor($r('app.color.bg_card'))
 
-      Divider().height(1).color('#F0F0F0')
+      Divider().height(1).color($r('app.color.divider'))
 
       // ── 统计 ──
       Row() {
         Text(`共 ${this.tasks.length} 个任务`)
           .fontSize(12)
-          .fontColor('#999999')
+          .fontColor($r('app.color.text_tertiary'))
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: this.topSafeHeight + 8, bottom: 4 })
-      .backgroundColor('#FFFFFF')
+      .backgroundColor($r('app.color.bg_card'))
 
       // ── 下载列表 ──
       if (this.tasks.length === 0) {
         Column() {
           Text('暂无下载任务')
             .fontSize(16)
-            .fontColor('#999999')
+            .fontColor($r('app.color.text_tertiary'))
           Text('在专辑详情页点击章节旁的下载按钮添加任务')
             .fontSize(13)
-            .fontColor('#CCCCCC')
+            .fontColor($r('app.color.text_disabled'))
             .margin({ top: 6 })
         }
         .width('100%')
@@ -137,7 +148,7 @@ struct DownloadPage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F8F8F8')
+    .backgroundColor($r('app.color.bg_page_alt'))
   }
 
   @Builder
@@ -150,7 +161,7 @@ struct DownloadPage {
             Text(task.chapterName)
               .fontSize(15)
               .fontWeight(FontWeight.Medium)
-              .fontColor('#333333')
+              .fontColor($r('app.color.text_primary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .layoutWeight(1)
@@ -159,7 +170,7 @@ struct DownloadPage {
               .fontSize(12)
               .fontColor(this.getStatusColor(task.status))
               .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-              .backgroundColor(this.getStatusColor(task.status) + '18')
+              .backgroundColor(this.getStatusBgColor(task.status))
               .borderRadius(4)
           }
           .width('100%')
@@ -167,7 +178,7 @@ struct DownloadPage {
           // 所属专辑
           Text(task.albumName)
             .fontSize(12)
-            .fontColor('#999999')
+            .fontColor($r('app.color.text_tertiary'))
             .margin({ top: 4 })
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -178,7 +189,7 @@ struct DownloadPage {
               Row() {
                 Text(`${task.completedImages}/${task.totalImages}`)
                   .fontSize(11)
-                  .fontColor('#999999')
+                  .fontColor($r('app.color.text_tertiary'))
 
                 Text(`${task.getProgress()}%`)
                   .fontSize(11)
@@ -195,18 +206,18 @@ struct DownloadPage {
                 .width('100%')
                 .height(4)
                 .color(this.getProgressColor(task.status))
-                .backgroundColor('#E0E0E0')
+                .backgroundColor($r('app.color.bg_placeholder'))
             }
             .width('100%')
           } else if (task.status === DownloadStatus.DONE) {
             Text(`共 ${task.totalImages} 张图片`)
               .fontSize(11)
-              .fontColor('#4CAF50')
+              .fontColor($r('app.color.status_done'))
               .margin({ top: 6 })
           } else if (task.status === DownloadStatus.ERROR) {
             Text(task.errorMsg || '下载失败')
               .fontSize(11)
-              .fontColor('#FF5A5F')
+              .fontColor($r('app.color.brand'))
               .margin({ top: 6 })
               .maxLines(2)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -221,9 +232,9 @@ struct DownloadPage {
             Button({ type: ButtonType.Normal }) {
               Text('暂停')
                 .fontSize(11)
-                .fontColor('#FF9800')
+                .fontColor($r('app.color.status_wait'))
             }
-            .backgroundColor('#FFF3E0')
+            .backgroundColor($r('app.color.status_wait_bg'))
             .borderRadius(4)
             .height(28)
             .padding({ left: 10, right: 10 })
@@ -232,9 +243,9 @@ struct DownloadPage {
             Button({ type: ButtonType.Normal }) {
               Text('继续')
                 .fontSize(11)
-                .fontColor('#4CAF50')
+                .fontColor($r('app.color.status_done'))
             }
-            .backgroundColor('#E8F5E9')
+            .backgroundColor($r('app.color.status_done_bg'))
             .borderRadius(4)
             .height(28)
             .padding({ left: 10, right: 10 })
@@ -244,9 +255,9 @@ struct DownloadPage {
           Button({ type: ButtonType.Normal }) {
             Text('删除')
               .fontSize(11)
-              .fontColor('#FF5A5F')
+              .fontColor($r('app.color.brand'))
           }
-          .backgroundColor('#FFF0F0')
+          .backgroundColor($r('app.color.brand_bg'))
           .borderRadius(4)
           .height(28)
           .padding({ left: 10, right: 10 })
@@ -259,7 +270,7 @@ struct DownloadPage {
     }
     .width('100%')
     .padding(14)
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.bg_card'))
     .borderRadius(8)
     .margin({ bottom: 8 })
   }

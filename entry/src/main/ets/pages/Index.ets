@@ -22,6 +22,7 @@ import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { MenuItem, buildMenuPopup, RouteColumn, buildRouteMenu, buildMenuOverlay } from '../common/MenuPopup';
 import { CommentItemComponent } from '../common/CommentItem';
 import { DeviceUtils } from 'common';
+import { ThemeSetting } from '../common/ThemeSetting';
 
 interface OrderItem {
   key: string;
@@ -82,10 +83,10 @@ struct HomePage {
             LoadingProgress()
               .width(40)
               .height(40)
-              .color('#FF5A5F')
+              .color($r('app.color.brand'))
             Text('加载中...')
               .fontSize(14)
-              .fontColor('#999999')
+              .fontColor($r('app.color.text_tertiary'))
               .margin({ top: 12 })
           }
           .width('100%')
@@ -95,7 +96,7 @@ struct HomePage {
           Column() {
             Text('暂无数据')
               .fontSize(16)
-              .fontColor('#999999')
+              .fontColor($r('app.color.text_tertiary'))
           }
           .width('100%')
           .height(300)
@@ -108,7 +109,7 @@ struct HomePage {
                 Text('最新上传')
                   .fontSize(17)
                   .fontWeight(FontWeight.Bold)
-                  .fontColor('#333333')
+                  .fontColor($r('app.color.text_primary'))
               }
               .width('100%')
               .padding({ left: 16, right: 16, top: 16, bottom: 10 })
@@ -137,7 +138,7 @@ struct HomePage {
                 Text(section.title)
                   .fontSize(17)
                   .fontWeight(FontWeight.Bold)
-                  .fontColor('#333333')
+                  .fontColor($r('app.color.text_primary'))
               }
               .width('100%')
               .padding({ left: 16, right: 16, top: 16, bottom: 10 })
@@ -166,7 +167,7 @@ struct HomePage {
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
-    .backgroundColor('#F5F5F5')
+    .backgroundColor($r('app.color.bg_page'))
   }
 
   @Builder
@@ -177,11 +178,11 @@ struct HomePage {
         .height(this.isTablet ? 200 : 160)
         .objectFit(ImageFit.Cover)
         .borderRadius(8)
-        .backgroundColor('#F0F0F0')
+        .backgroundColor($r('app.color.bg_secondary'))
 
       Text(album.name)
         .fontSize(12)
-        .fontColor('#333333')
+        .fontColor($r('app.color.text_primary'))
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .lineHeight(16)
@@ -418,7 +419,7 @@ struct ProfilePage {
                 .height(80)
                 .borderRadius(40)
                 .objectFit(ImageFit.Cover)
-                .backgroundColor('#F0F0F0')
+                .backgroundColor($r('app.color.bg_secondary'))
                 .margin({ top: 24, bottom: 12 })
             } else {
               Image($r('app.media.ic_default_avatar'))
@@ -426,24 +427,24 @@ struct ProfilePage {
                 .height(80)
                 .borderRadius(40)
                 .objectFit(ImageFit.Cover)
-                .backgroundColor('#F0F0F0')
+                .backgroundColor($r('app.color.bg_secondary'))
                 .margin({ top: 24, bottom: 12 })
             }
 
             Text(this.apiService.getUserSession().username)
               .fontSize(20)
               .fontWeight(FontWeight.Bold)
-              .fontColor('#333333')
+              .fontColor($r('app.color.text_primary'))
 
             Text(`Lv.${this.apiService.getUserSession().level} · ${this.apiService.getUserSession().levelName}`)
               .fontSize(13)
-              .fontColor('#999999')
+              .fontColor($r('app.color.text_tertiary'))
               .margin({ top: 4 })
           }
           .width('100%')
           .alignItems(HorizontalAlign.Center)
           .padding({ top: 16, bottom: 16 })
-          .backgroundColor('#FFFFFF')
+          .backgroundColor($r('app.color.bg_card'))
           .borderRadius(12)
           .margin({ top: 16 })
 
@@ -453,9 +454,9 @@ struct ProfilePage {
             Button({ type: ButtonType.Normal }) {
               Text('退出登录')
                 .fontSize(15)
-                .fontColor('#FF5A5F')
+                .fontColor($r('app.color.brand'))
             }
-            .backgroundColor('#FFF0F0')
+            .backgroundColor($r('app.color.brand_bg'))
             .borderRadius(22)
             .layoutWeight(1)
             .height(44)
@@ -465,9 +466,9 @@ struct ProfilePage {
             Button({ type: ButtonType.Normal }) {
               Text('清理缓存')
                 .fontSize(15)
-                .fontColor('#666666')
+                .fontColor($r('app.color.text_secondary'))
             }
-            .backgroundColor('#F5F5F5')
+            .backgroundColor($r('app.color.bg_page'))
             .borderRadius(22)
             .layoutWeight(1)
             .height(44)
@@ -490,9 +491,9 @@ struct ProfilePage {
                         Row() {
                           Text('全部')
                             .fontSize(13)
-                            .fontColor(this.favCurrentFolderId === '0' ? '#FFFFFF' : '#666666')
+                            .fontColor(this.favCurrentFolderId === '0' ? $r('app.color.text_on_accent') : $r('app.color.text_secondary'))
                             .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                            .backgroundColor(this.favCurrentFolderId === '0' ? '#FF5A5F' : '#F5F5F5')
+                            .backgroundColor(this.favCurrentFolderId === '0' ? $r('app.color.brand') : $r('app.color.bg_page'))
                             .borderRadius(14)
                             .margin({ right: 8 })
                             .onClick(() => this.onFolderChange('0'))
@@ -500,9 +501,9 @@ struct ProfilePage {
                           ForEach(this.favFolders, (folder: FavoriteFolderItem) => {
                             Text(folder.name)
                               .fontSize(13)
-                              .fontColor(this.favCurrentFolderId === folder.FID ? '#FFFFFF' : '#666666')
+                              .fontColor(this.favCurrentFolderId === folder.FID ? $r('app.color.text_on_accent') : $r('app.color.text_secondary'))
                               .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-                              .backgroundColor(this.favCurrentFolderId === folder.FID ? '#FF5A5F' : '#F5F5F5')
+                              .backgroundColor(this.favCurrentFolderId === folder.FID ? $r('app.color.brand') : $r('app.color.bg_page'))
                               .borderRadius(14)
                               .margin({ right: 8 })
                               .onClick(() => this.onFolderChange(folder.FID))
@@ -518,15 +519,15 @@ struct ProfilePage {
                     // 收藏列表
                     if (this.favAlbums.length === 0 && this.favIsLoading) {
                       Column() {
-                        LoadingProgress().width(40).height(40).color('#FF5A5F')
-                        Text('加载中...').fontSize(14).fontColor('#999999').margin({ top: 12 })
+                        LoadingProgress().width(40).height(40).color($r('app.color.brand'))
+                        Text('加载中...').fontSize(14).fontColor($r('app.color.text_tertiary')).margin({ top: 12 })
                       }
                       .width('100%')
                       .height(300)
                       .justifyContent(FlexAlign.Center)
                     } else if (this.favAlbums.length === 0) {
                       Column() {
-                        Text('暂无收藏').fontSize(16).fontColor('#999999')
+                        Text('暂无收藏').fontSize(16).fontColor($r('app.color.text_tertiary'))
                       }
                       .width('100%')
                       .height(200)
@@ -549,14 +550,14 @@ struct ProfilePage {
                     // 收藏加载更多（自动加载）
                     if (this.favIsLoading && this.favAlbums.length > 0) {
                       Row() {
-                        LoadingProgress().width(20).height(20).color('#FF5A5F')
-                        Text('加载中...').fontSize(12).fontColor('#999999').margin({ left: 6 })
+                        LoadingProgress().width(20).height(20).color($r('app.color.brand'))
+                        Text('加载中...').fontSize(12).fontColor($r('app.color.text_tertiary')).margin({ left: 6 })
                       }
                       .width('100%').justifyContent(FlexAlign.Center)
                       .padding({ top: 12, bottom: 20 })
                     }
                     if (!this.favHasMore && this.favAlbums.length > 0) {
-                      Text('没有更多了').fontSize(12).fontColor('#CCCCCC')
+                      Text('没有更多了').fontSize(12).fontColor($r('app.color.text_disabled'))
                         .width('100%').textAlign(TextAlign.Center)
                         .padding({ top: 8, bottom: 20 })
                     }
@@ -587,15 +588,15 @@ struct ProfilePage {
                     // 历史列表
                     if (this.watchAlbums.length === 0 && this.watchIsLoading) {
                       Column() {
-                        LoadingProgress().width(40).height(40).color('#FF5A5F')
-                        Text('加载中...').fontSize(14).fontColor('#999999').margin({ top: 12 })
+                        LoadingProgress().width(40).height(40).color($r('app.color.brand'))
+                        Text('加载中...').fontSize(14).fontColor($r('app.color.text_tertiary')).margin({ top: 12 })
                       }
                       .width('100%')
                       .height(300)
                       .justifyContent(FlexAlign.Center)
                     } else if (this.watchAlbums.length === 0) {
                       Column() {
-                        Text('暂无观看记录').fontSize(16).fontColor('#999999')
+                        Text('暂无观看记录').fontSize(16).fontColor($r('app.color.text_tertiary'))
                       }
                       .width('100%')
                       .height(200)
@@ -618,14 +619,14 @@ struct ProfilePage {
                     // 历史加载更多（自动加载）
                     if (this.watchIsLoading && this.watchAlbums.length > 0) {
                       Row() {
-                        LoadingProgress().width(20).height(20).color('#FF5A5F')
-                        Text('加载中...').fontSize(12).fontColor('#999999').margin({ left: 6 })
+                        LoadingProgress().width(20).height(20).color($r('app.color.brand'))
+                        Text('加载中...').fontSize(12).fontColor($r('app.color.text_tertiary')).margin({ left: 6 })
                       }
                       .width('100%').justifyContent(FlexAlign.Center)
                       .padding({ top: 12, bottom: 20 })
                     }
                     if (!this.watchHasMore && this.watchAlbums.length > 0) {
-                      Text('没有更多了').fontSize(12).fontColor('#CCCCCC')
+                      Text('没有更多了').fontSize(12).fontColor($r('app.color.text_disabled'))
                         .width('100%').textAlign(TextAlign.Center)
                         .padding({ top: 8, bottom: 20 })
                     }
@@ -664,16 +665,16 @@ struct ProfilePage {
           Row() {
             SymbolGlyph($r('sys.symbol.person'))
               .fontSize(48)
-              .fontColor(['#CCCCCC'])
+              .fontColor([$r('app.color.text_disabled')])
 
             Column() {
               Text('未登录')
                 .fontSize(17)
                 .fontWeight(FontWeight.Medium)
-                .fontColor('#333333')
+                .fontColor($r('app.color.text_primary'))
               Text('点击登录以同步收藏')
                 .fontSize(13)
-                .fontColor('#999999')
+                .fontColor($r('app.color.text_tertiary'))
                 .margin({ top: 2 })
             }
             .alignItems(HorizontalAlign.Start)
@@ -682,11 +683,11 @@ struct ProfilePage {
 
             SymbolGlyph($r('sys.symbol.chevron_right'))
               .fontSize(20)
-              .fontColor(['#CCCCCC'])
+              .fontColor([$r('app.color.text_disabled')])
           }
           .width('100%')
           .padding({ left: 20, right: 20, top: 24, bottom: 20 })
-          .backgroundColor('#FFFFFF')
+          .backgroundColor($r('app.color.bg_card'))
           .borderRadius(12)
           .margin({ top: 16 })
           .onClick(() => this.onLogin())
@@ -695,15 +696,18 @@ struct ProfilePage {
           Button({ type: ButtonType.Normal }) {
             Text('清理缓存')
               .fontSize(15)
-              .fontColor('#666666')
+              .fontColor($r('app.color.text_secondary'))
           }
-          .backgroundColor('#F5F5F5')
+          .backgroundColor($r('app.color.bg_page'))
           .borderRadius(22)
           .width('80%')
           .height(44)
           .margin({ top: 16 })
           .onClick(() => this.onClearCache())
         }
+
+        // ── 主题设置（黑白模式） ──
+        ThemeSetting()
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: this.topSafeHeight + 40 })
@@ -711,7 +715,7 @@ struct ProfilePage {
     .width('100%')
     .height('100%')
     .scrollBar(BarState.Off)
-    .backgroundColor('#F5F5F5')
+    .backgroundColor($r('app.color.bg_page'))
   }
 
   @Builder
@@ -722,14 +726,14 @@ struct ProfilePage {
         .aspectRatio(0.72)
         .objectFit(ImageFit.Cover)
         .borderRadius({ topLeft: 8, topRight: 8 })
-        .backgroundColor('#F0F0F0')
+        .backgroundColor($r('app.color.bg_secondary'))
         .constraintSize({ maxWidth: this.isTablet ? 200 : 180 })
 
       Column() {
         Text(album.name)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_primary'))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .lineHeight(18)
@@ -739,7 +743,7 @@ struct ProfilePage {
         Row() {
           Text(album.author)
             .fontSize(11)
-            .fontColor('#999999')
+            .fontColor($r('app.color.text_tertiary'))
             .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -752,11 +756,11 @@ struct ProfilePage {
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.bg_card'))
     .borderRadius(8)
     .shadow({
       radius: 4,
-      color: '#10000000',
+      color: $r('app.color.scrim'),
       offsetX: 0,
       offsetY: 2
     })
@@ -964,10 +968,10 @@ struct CategoryPage {
             LoadingProgress()
               .width(40)
               .height(40)
-              .color('#FF5A5F')
+              .color($r('app.color.brand'))
             Text('加载中...')
               .fontSize(14)
-              .fontColor('#999999')
+              .fontColor($r('app.color.text_tertiary'))
               .margin({ top: 12 })
           }
           .width('100%')
@@ -977,7 +981,7 @@ struct CategoryPage {
           Column() {
             Text('暂无数据')
               .fontSize(16)
-              .fontColor('#999999')
+              .fontColor($r('app.color.text_tertiary'))
           }
           .width('100%')
           .height('100%')
@@ -1006,7 +1010,7 @@ struct CategoryPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor('#FFFFFF')
+      .backgroundColor($r('app.color.bg_card'))
 
       // ── 浮层：排序 + 分类标签（毛玻璃） ──
       Column() {
@@ -1015,10 +1019,10 @@ struct CategoryPage {
           ForEach(this.orders, (item: OrderItem) => {
             Text(item.label)
               .fontSize(13)
-              .fontColor(this.currentOrder === item.key ? '#FF5A5F' : '#666666')
+              .fontColor(this.currentOrder === item.key ? $r('app.color.brand') : $r('app.color.text_secondary'))
               .fontWeight(this.currentOrder === item.key ? FontWeight.Bold : FontWeight.Normal)
               .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-              .backgroundColor(this.currentOrder === item.key ? '#FFF0F0' : '#F5F5F5')
+              .backgroundColor(this.currentOrder === item.key ? $r('app.color.brand_bg') : $r('app.color.bg_page'))
               .borderRadius(14)
               .margin({ right: 8 })
               .onClick(() => this.onOrderChange(item.key))
@@ -1033,9 +1037,9 @@ struct CategoryPage {
             ForEach(this.categories, (cat: string) => {
               Text(CATEGORY_NAME_MAP[cat] ?? cat)
                 .fontSize(14)
-                .fontColor(this.currentCategory === cat ? '#FFFFFF' : '#666666')
+                .fontColor(this.currentCategory === cat ? $r('app.color.text_on_accent') : $r('app.color.text_secondary'))
                 .padding({ left: 14, right: 14, top: 7, bottom: 7 })
-                .backgroundColor(this.currentCategory === cat ? '#FF5A5F' : '#F5F5F5')
+                .backgroundColor(this.currentCategory === cat ? $r('app.color.brand') : $r('app.color.bg_page'))
                 .borderRadius(16)
                 .margin({ right: 8 })
                 .onClick(() => this.onCategoryChange(cat))
@@ -1044,9 +1048,9 @@ struct CategoryPage {
             // 查看更多
             SymbolGlyph($r('sys.symbol.chevron_right'))
               .fontSize(18)
-              .fontColor(['#666666'])
+              .fontColor([$r('app.color.text_secondary')])
               .padding({ left: 10, right: 10, top: 7, bottom: 7 })
-              .backgroundColor('#F5F5F5')
+              .backgroundColor($r('app.color.bg_page'))
               .borderRadius(16)
               .onClick(() => this.onMoreCategory())
           }
@@ -1060,13 +1064,13 @@ struct CategoryPage {
       .position({ x: 0, y: this.topSafeHeight + 48 })
       .width('100%')
       .padding({ top: 4 })
-      .backgroundColor('rgba(255, 255, 255, 0.85)')
+      .backgroundColor($r('app.color.overlay_bg'))
       .backdropBlur(20)
       .zIndex(10)
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.bg_card'))
   }
 
   @Builder
@@ -1078,14 +1082,14 @@ struct CategoryPage {
         .aspectRatio(0.72)
         .objectFit(ImageFit.Cover)
         .borderRadius({ topLeft: 8, topRight: 8 })
-        .backgroundColor('#F0F0F0')
+        .backgroundColor($r('app.color.bg_secondary'))
 
       // 信息区
       Column() {
         Text(album.name)
           .fontSize(14)
           .fontWeight(FontWeight.Medium)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_primary'))
           .maxLines(2)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .lineHeight(18)
@@ -1095,7 +1099,7 @@ struct CategoryPage {
         Row() {
           Text(album.author)
             .fontSize(11)
-            .fontColor('#999999')
+            .fontColor($r('app.color.text_tertiary'))
             .layoutWeight(1)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1103,7 +1107,7 @@ struct CategoryPage {
           if (album.totalViews && album.totalViews !== '0') {
             Text(`${album.totalViews} 次`)
               .fontSize(10)
-              .fontColor('#CCCCCC')
+              .fontColor($r('app.color.text_disabled'))
           }
         }
         .width('100%')
@@ -1114,11 +1118,11 @@ struct CategoryPage {
       .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.bg_card'))
     .borderRadius(8)
     .shadow({
       radius: 4,
-      color: '#10000000',
+      color: $r('app.color.scrim'),
       offsetX: 0,
       offsetY: 2
     })
@@ -1198,10 +1202,10 @@ struct ForumPage {
         ForEach(this.modes, (item: ForumModeItem) => {
           Text(item.label)
             .fontSize(13)
-            .fontColor(this.currentMode === item.key ? '#FF5A5F' : '#666666')
+            .fontColor(this.currentMode === item.key ? $r('app.color.brand') : $r('app.color.text_secondary'))
             .fontWeight(this.currentMode === item.key ? FontWeight.Bold : FontWeight.Normal)
             .padding({ left: 14, right: 14, top: 6, bottom: 6 })
-            .backgroundColor(this.currentMode === item.key ? '#FFF0F0' : '#F5F5F5')
+            .backgroundColor(this.currentMode === item.key ? $r('app.color.brand_bg') : $r('app.color.bg_page'))
             .borderRadius(14)
             .margin({ right: 8 })
             .onClick(() => this.onModeChange(item.key))
@@ -1211,11 +1215,11 @@ struct ForumPage {
 
         Text(`${this.totalComments} 条`)
           .fontSize(12)
-          .fontColor('#999999')
+          .fontColor($r('app.color.text_tertiary'))
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-      .backgroundColor('#FFFFFF')
+      .backgroundColor($r('app.color.bg_card'))
 
       // ── 评论列表 ──
       if (this.isLoading) {
@@ -1223,10 +1227,10 @@ struct ForumPage {
           LoadingProgress()
             .width(40)
             .height(40)
-            .color('#FF5A5F')
+            .color($r('app.color.brand'))
           Text('加载中...')
             .fontSize(14)
-            .fontColor('#999999')
+            .fontColor($r('app.color.text_tertiary'))
             .margin({ top: 12 })
         }
         .width('100%')
@@ -1236,7 +1240,7 @@ struct ForumPage {
         Column() {
           Text('暂无评论')
             .fontSize(16)
-            .fontColor('#999999')
+            .fontColor($r('app.color.text_tertiary'))
         }
         .width('100%')
         .layoutWeight(1)
@@ -1258,10 +1262,10 @@ struct ForumPage {
                 LoadingProgress()
                   .width(24)
                   .height(24)
-                  .color('#FF5A5F')
+                  .color($r('app.color.brand'))
                 Text('加载更多...')
                   .fontSize(13)
-                  .fontColor('#999999')
+                  .fontColor($r('app.color.text_tertiary'))
                   .margin({ left: 8 })
               }
               .width('100%')
@@ -1270,14 +1274,14 @@ struct ForumPage {
             } else if (this.hasMore) {
               Text('上拉加载更多')
                 .fontSize(13)
-                .fontColor('#CCCCCC')
+                .fontColor($r('app.color.text_disabled'))
                 .width('100%')
                 .textAlign(TextAlign.Center)
                 .padding({ top: 16, bottom: 16 })
             } else {
               Text('没有更多了')
                 .fontSize(13)
-                .fontColor('#CCCCCC')
+                .fontColor($r('app.color.text_disabled'))
                 .width('100%')
                 .textAlign(TextAlign.Center)
                 .padding({ top: 16, bottom: 16 })
@@ -1298,7 +1302,7 @@ struct ForumPage {
     .width('100%')
     .height('100%')
     .padding({ top: this.topSafeHeight + 52, bottom: 80 })
-    .backgroundColor('#F5F5F5')
+    .backgroundColor($r('app.color.bg_page'))
   }
 
   async handleSendReply(commentId: string, albumId: string, text: string): Promise<void> {
@@ -1380,10 +1384,10 @@ struct Index {
     Column() {
       SymbolGlyph(icon)
         .fontSize(24)
-        .fontColor([this.currentIndex === index ? '#007AFF' : '#8E8E93'])
+        .fontColor([this.currentIndex === index ? $r('app.color.tab_active') : $r('app.color.tab_inactive')])
       Text(label)
         .fontSize(10)
-        .fontColor(this.currentIndex === index ? '#007AFF' : '#8E8E93')
+        .fontColor(this.currentIndex === index ? $r('app.color.tab_active') : $r('app.color.tab_inactive'))
     }
     .padding({ top: 8, bottom: 4 })
     .justifyContent(FlexAlign.Center)
@@ -1445,14 +1449,14 @@ struct Index {
         Text('JMComic')
           .fontSize(22)
           .fontWeight(FontWeight.Bold)
-          .fontColor('#333333')
+          .fontColor($r('app.color.text_primary'))
 
         Button({ type: ButtonType.Normal }) {
           Text('防失联')
             .fontSize(13)
-            .fontColor('#FF5A5F')
+            .fontColor($r('app.color.brand'))
         }
-        .backgroundColor('#FFF0F0')
+        .backgroundColor($r('app.color.brand_bg'))
         .borderRadius(14)
         .height(32)
         .padding({ left: 10, right: 10 })
@@ -1464,9 +1468,9 @@ struct Index {
         Button({ type: ButtonType.Normal }) {
           Text('线路')
             .fontSize(15)
-            .fontColor('#666666')
+            .fontColor($r('app.color.text_secondary'))
         }
-        .backgroundColor('#F5F5F5')
+        .backgroundColor($r('app.color.bg_page'))
         .borderRadius(18)
         .width(64)
         .height(36)
@@ -1476,9 +1480,9 @@ struct Index {
         Button({ type: ButtonType.Normal }) {
           Text('搜索')
             .fontSize(15)
-            .fontColor('#666666')
+            .fontColor($r('app.color.text_secondary'))
         }
-        .backgroundColor('#F5F5F5')
+        .backgroundColor($r('app.color.bg_page'))
         .borderRadius(18)
         .width(80)
         .height(36)
@@ -1487,7 +1491,7 @@ struct Index {
       .position({ x: 0, y: 0 })
       .width('100%')
       .padding({ left: 16, right: 16, top: this.topSafeHeight + 8, bottom: 4 })
-      .backgroundColor('rgba(245, 245, 245, 0.85)')
+      .backgroundColor($r('app.color.header_bg'))
       .backdropBlur(20)
       .zIndex(10)
 
@@ -1521,6 +1525,6 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#F5F5F5')
+    .backgroundColor($r('app.color.bg_page'))
   }
 }

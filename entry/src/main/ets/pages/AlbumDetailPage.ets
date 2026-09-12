@@ -509,10 +509,10 @@ struct AlbumDetailPage {
           LoadingProgress()
             .width(40)
             .height(40)
-            .color('#FF5A5F')
+            .color($r('app.color.brand'))
           Text('加载中...')
             .fontSize(14)
-            .fontColor('#999999')
+            .fontColor($r('app.color.text_tertiary'))
             .margin({ top: 12 })
         }
         .width('100%')
@@ -532,13 +532,13 @@ struct AlbumDetailPage {
                 .height(165)
                 .objectFit(ImageFit.Cover)
                 .borderRadius(8)
-                .backgroundColor('#F0F0F0')
+                .backgroundColor($r('app.color.bg_secondary'))
 
               Column() {
                 Text(this.album.name)
                   .fontSize(18)
                   .fontWeight(FontWeight.Bold)
-                  .fontColor('#333333')
+                  .fontColor($r('app.color.text_primary'))
                   .maxLines(3)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .lineHeight(24)
@@ -547,9 +547,9 @@ struct AlbumDetailPage {
                   if (this.album.category && typeof this.album.category === 'object') {
                     Text((this.album.category as CategoryBean).title || '')
                       .fontSize(12)
-                      .fontColor('#FF5A5F')
+                      .fontColor($r('app.color.brand'))
                       .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-                      .backgroundColor('#FFF0F0')
+                      .backgroundColor($r('app.color.brand_bg'))
                       .borderRadius(4)
                       .margin({ right: 8 })
                   }
@@ -560,46 +560,46 @@ struct AlbumDetailPage {
                 Row() {
                   Text(`👁 ${this.album.total_views}`)
                     .fontSize(12)
-                    .fontColor('#999999')
+                    .fontColor($r('app.color.text_tertiary'))
                     .margin({ right: 16 })
 
                   Text(`📷 ${this.chapters.length}话`)
                     .fontSize(12)
-                    .fontColor('#999999')
+                    .fontColor($r('app.color.text_tertiary'))
                     .margin({ right: 16 })
 
                   Text(`❤ ${this.album.likes}`)
                     .fontSize(12)
-                    .fontColor('#999999')
+                    .fontColor($r('app.color.text_tertiary'))
                     .margin({ right: 16 })
 
                   Text(`💬 ${this.album.comment_total || 0}`)
                     .fontSize(12)
-                    .fontColor('#999999')
+                    .fontColor($r('app.color.text_tertiary'))
                 }
                 .width('100%')
                 .margin({ top: 8 })
 
                 Text('禁漫车')
                   .fontSize(14)
-                  .fontColor('#999999')
+                  .fontColor($r('app.color.text_tertiary'))
                 Text(`JM${this.album.id}`)
                   .fontSize(14)
-                  .fontColor('#666666')
+                  .fontColor($r('app.color.text_secondary'))
 
                 // 收藏按钮
                 Button({ type: ButtonType.Normal }) {
                   Row() {
                     SymbolGlyph($r('sys.symbol.heart'))
                       .fontSize(16)
-                      .fontColor(['#FF5A5F'])
+                      .fontColor([$r('app.color.brand')])
                     Text(this.isFavorited ? '已收藏' : '收藏')
                       .fontSize(13)
-                      .fontColor('#FF5A5F')
+                      .fontColor($r('app.color.brand'))
                       .margin({ left: 4 })
                   }
                 }
-                .backgroundColor(this.isFavorited ? '#FFD6D8' : '#FFF0F0')
+                .backgroundColor(this.isFavorited ? $r('app.color.brand_checked') : $r('app.color.brand_bg'))
                 .borderRadius(16)
                 .height(32)
                 .padding({ left: 16, right: 16 })
@@ -620,12 +620,12 @@ struct AlbumDetailPage {
                 Text('简介')
                   .fontSize(15)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#333333')
+                  .fontColor($r('app.color.text_primary'))
                   .margin({ bottom: 8 })
 
                 Text(this.album.description)
                   .fontSize(14)
-                  .fontColor('#666666')
+                  .fontColor($r('app.color.text_secondary'))
                   .lineHeight(22)
                   .maxLines(6)
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -641,11 +641,11 @@ struct AlbumDetailPage {
                 ForEach(this.album.tags, (tag: string) => {
                   Text(tag)
                     .fontSize(12)
-                    .fontColor('#FF5A5F')
+                    .fontColor($r('app.color.brand'))
                     .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-                    .backgroundColor('#FFF5F5')
+                    .backgroundColor($r('app.color.brand_bg_strong'))
                     .borderRadius(4)
-                    .border({ width: 0.5, color: '#FFD4D4' })
+                    .border({ width: 0.5, color: $r('app.color.brand_border') })
                     .margin({ right: 8, bottom: 8 })
                     .onClick(() => {
                       if (tag) {
@@ -667,7 +667,7 @@ struct AlbumDetailPage {
                 Text('作者')
                   .fontSize(15)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#333333')
+                  .fontColor($r('app.color.text_primary'))
                   .width('100%')
                   .margin({ bottom: 6 })
 
@@ -675,11 +675,11 @@ struct AlbumDetailPage {
                   ForEach(this.parseAuthorList(this.album?.author ?? ''), (name: string) => {
                     Text(name)
                       .fontSize(12)
-                      .fontColor('#FF5A5F')
+                      .fontColor($r('app.color.brand'))
                       .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-                      .backgroundColor('#FFF5F5')
+                      .backgroundColor($r('app.color.brand_bg_strong'))
                       .borderRadius(4)
-                      .border({ width: 0.5, color: '#FFD4D4' })
+                      .border({ width: 0.5, color: $r('app.color.brand_border') })
                       .margin({ right: 8, bottom: 8 })
                       .onClick(() => {
                         if (name) {
@@ -703,7 +703,7 @@ struct AlbumDetailPage {
                 Text('登场人物')
                   .fontSize(15)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#333333')
+                  .fontColor($r('app.color.text_primary'))
                   .width('100%')
                   .margin({ bottom: 6 })
 
@@ -711,11 +711,11 @@ struct AlbumDetailPage {
                   ForEach(this.album.actors, (actor: string) => {
                     Text(actor)
                       .fontSize(12)
-                      .fontColor('#FF5A5F')
+                      .fontColor($r('app.color.brand'))
                       .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-                      .backgroundColor('#FFF5F5')
+                      .backgroundColor($r('app.color.brand_bg_strong'))
                       .borderRadius(4)
-                      .border({ width: 0.5, color: '#FFD4D4' })
+                      .border({ width: 0.5, color: $r('app.color.brand_border') })
                       .margin({ right: 8, bottom: 8 })
                       .onClick(() => {
                         if (actor) {
@@ -739,7 +739,7 @@ struct AlbumDetailPage {
                 Text('作品')
                   .fontSize(15)
                   .fontWeight(FontWeight.Medium)
-                  .fontColor('#333333')
+                  .fontColor($r('app.color.text_primary'))
                   .width('100%')
                   .margin({ bottom: 6 })
 
@@ -747,11 +747,11 @@ struct AlbumDetailPage {
                   ForEach(this.album.works, (work: string) => {
                     Text(work)
                       .fontSize(12)
-                      .fontColor('#FF5A5F')
+                      .fontColor($r('app.color.brand'))
                       .padding({ left: 10, right: 10, top: 4, bottom: 4 })
-                      .backgroundColor('#FFF5F5')
+                      .backgroundColor($r('app.color.brand_bg_strong'))
                       .borderRadius(4)
-                      .border({ width: 0.5, color: '#FFD4D4' })
+                      .border({ width: 0.5, color: $r('app.color.brand_border') })
                       .margin({ right: 8, bottom: 8 })
                       .onClick(() => {
                         if (work) {
@@ -777,8 +777,8 @@ struct AlbumDetailPage {
                   .height(48)
                   .fontSize(16)
                   .fontWeight(FontWeight.Bold)
-                  .fontColor('#FFFFFF')
-                  .backgroundColor('#FF5A5F')
+                  .fontColor($r('app.color.text_on_accent'))
+                  .backgroundColor($r('app.color.brand'))
                   .borderRadius(24)
                   .onClick(() => {
                     if (this.hasRead && this.lastReadChapterId) {
@@ -797,10 +797,10 @@ struct AlbumDetailPage {
                   .height(48)
                   .fontSize(16)
                   .fontWeight(FontWeight.Bold)
-                  .fontColor('#FF5A5F')
-                  .backgroundColor('#FFFFFF')
+                  .fontColor($r('app.color.brand'))
+                  .backgroundColor($r('app.color.bg_card'))
                   .borderRadius(24)
-                  .border({ width: 1, color: '#FF5A5F' })
+                  .border({ width: 1, color: $r('app.color.brand') })
                   .padding({ left: 24, right: 24 })
                   .margin({ left: 12 })
                   .onClick(() => {
@@ -819,23 +819,23 @@ struct AlbumDetailPage {
               Text('章节列表')
                 .fontSize(16)
                 .fontWeight(FontWeight.Bold)
-                .fontColor('#333333')
+                .fontColor($r('app.color.text_primary'))
 
               Blank()
 
               Text(`${this.chapters.length} 章`)
                 .fontSize(13)
-                .fontColor('#999999')
+                .fontColor($r('app.color.text_tertiary'))
                 .margin({ right: 8 })
 
               SymbolGlyph($r('sys.symbol.chevron_down'))
                 .fontSize(16)
-                .fontColor(['#999999'])
+                .fontColor([$r('app.color.text_tertiary')])
                 .rotate({ angle: this.isChapterExpanded ? 180 : 0 })
             }
             .width('100%')
             .padding({ left: 16, right: 16, top: 12, bottom: 8 })
-            .backgroundColor('#FAFAFA')
+            .backgroundColor($r('app.color.bg_card_alt'))
             .onClick(() => { this.isChapterExpanded = !this.isChapterExpanded; })
 
             // ── 章节列表 ──
@@ -844,13 +844,13 @@ struct AlbumDetailPage {
                 Row() {
                   Text(`${index + 1}`)
                     .fontSize(14)
-                    .fontColor('#999999')
+                    .fontColor($r('app.color.text_tertiary'))
                     .width(30)
                     .textAlign(TextAlign.Center)
 
                   Text(photo.name)
                     .fontSize(15)
-                    .fontColor('#333333')
+                    .fontColor($r('app.color.text_primary'))
                     .layoutWeight(1)
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -859,21 +859,21 @@ struct AlbumDetailPage {
                   if (photo.isRead) {
                     Text('看过')
                       .fontSize(11)
-                      .fontColor('#FF5A5F')
+                      .fontColor($r('app.color.brand'))
                       .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                      .backgroundColor('#FFF0F0')
+                      .backgroundColor($r('app.color.brand_bg'))
                       .borderRadius(4)
                       .margin({ right: 6 })
                   }
 
                   SymbolGlyph($r('sys.symbol.chevron_right'))
                     .fontSize(16)
-                    .fontColor(['#CCCCCC'])
+                    .fontColor([$r('app.color.text_disabled')])
                 }
                 .width('100%')
                 .height(52)
                 .padding({ left: 16, right: 16 })
-                .backgroundColor(photo.isRead ? '#FFF0F0' : '#FFFFFF')
+                .backgroundColor(photo.isRead ? $r('app.color.brand_bg') : $r('app.color.bg_card'))
                 .onClick(() => this.onChapterClick(photo))
               }, (item: PhotoViewModel) => `${item.id}_${item.isRead}`)
             }
@@ -884,10 +884,10 @@ struct AlbumDetailPage {
                 Text('相关作品')
                   .fontSize(16)
                   .fontWeight(FontWeight.Bold)
-                  .fontColor('#333333')
+                  .fontColor($r('app.color.text_primary'))
                   .width('100%')
                   .padding({ left: 16, top: 16, bottom: 8 })
-                  .backgroundColor('#FAFAFA')
+                  .backgroundColor($r('app.color.bg_card_alt'))
 
                 ForEach(this.album.related_list, (work: JmRelatedWork) => {
                   Row() {
@@ -896,18 +896,18 @@ struct AlbumDetailPage {
                       .height(80)
                       .objectFit(ImageFit.Cover)
                       .borderRadius(4)
-                      .backgroundColor('#F0F0F0')
+                      .backgroundColor($r('app.color.bg_secondary'))
 
                     Column() {
                       Text(work.name)
                         .fontSize(14)
-                        .fontColor('#333333')
+                        .fontColor($r('app.color.text_primary'))
                         .maxLines(2)
                         .textOverflow({ overflow: TextOverflow.Ellipsis })
 
                       Text(work.author)
                         .fontSize(12)
-                        .fontColor('#999999')
+                        .fontColor($r('app.color.text_tertiary'))
                         .margin({ top: 4 })
                     }
                     .layoutWeight(1)
@@ -916,7 +916,7 @@ struct AlbumDetailPage {
                   }
                   .width('100%')
                   .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-                  .backgroundColor('#FFFFFF')
+                  .backgroundColor($r('app.color.bg_card'))
                   .onClick(() => {
                     router.replaceUrl({
                       url: 'pages/AlbumDetailPage',
@@ -940,7 +940,7 @@ struct AlbumDetailPage {
         Column() {
           Text('加载失败，请重试')
             .fontSize(16)
-            .fontColor('#999999')
+            .fontColor($r('app.color.text_tertiary'))
         }
         .width('100%')
         .height('100%')
@@ -952,7 +952,7 @@ struct AlbumDetailPage {
         // 左：返回按钮
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(24)
-          .fontColor(['#333333'])
+          .fontColor([$r('app.color.text_primary')])
           .onClick(() => this.onBack())
 
         Blank()
@@ -960,18 +960,18 @@ struct AlbumDetailPage {
         // 右：分享
         SymbolGlyph($r('sys.symbol.share'))
           .fontSize(24)
-          .fontColor(['#333333'])
+          .fontColor([$r('app.color.text_primary')])
           .onClick(() => this.onShare())
       }
       .position({ x: 0, y: 0 })
       .width('100%')
       .padding({ left: 12, right: 12, top: this.topSafeHeight + 20, bottom: 4 })
-      .backgroundColor('rgba(255, 255, 255, 0.85)')
+      .backgroundColor($r('app.color.header_bg'))
       .backdropBlur(20)
       .zIndex(10)
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.bg_card'))
   }
 }

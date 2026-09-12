@@ -145,10 +145,10 @@ struct AlbumCommentPage {
             LoadingProgress()
               .width(40)
               .height(40)
-              .color('#FF5A5F')
+              .color($r('app.color.brand'))
             Text('加载中...')
               .fontSize(14)
-              .fontColor('#999999')
+              .fontColor($r('app.color.text_tertiary'))
               .margin({ top: 12 })
           }
           .width('100%')
@@ -158,7 +158,7 @@ struct AlbumCommentPage {
           Column() {
             Text('暂无评论')
               .fontSize(16)
-              .fontColor('#999999')
+              .fontColor($r('app.color.text_tertiary'))
           }
           .width('100%')
           .layoutWeight(1)
@@ -182,10 +182,10 @@ struct AlbumCommentPage {
                   LoadingProgress()
                     .width(24)
                     .height(24)
-                    .color('#FF5A5F')
+                    .color($r('app.color.brand'))
                   Text('加载更多...')
                     .fontSize(13)
-                    .fontColor('#999999')
+                    .fontColor($r('app.color.text_tertiary'))
                     .margin({ left: 8 })
                 }
                 .width('100%')
@@ -194,14 +194,14 @@ struct AlbumCommentPage {
               } else if (this.hasMore) {
                 Text('上拉加载更多')
                   .fontSize(13)
-                  .fontColor('#CCCCCC')
+                  .fontColor($r('app.color.text_disabled'))
                   .width('100%')
                   .textAlign(TextAlign.Center)
                   .padding({ top: 16, bottom: 16 })
               } else {
                 Text('没有更多了')
                   .fontSize(13)
-                  .fontColor('#CCCCCC')
+                  .fontColor($r('app.color.text_disabled'))
                   .width('100%')
                   .textAlign(TextAlign.Center)
                   .padding({ top: 16, bottom: 16 })
@@ -227,45 +227,45 @@ struct AlbumCommentPage {
             .layoutWeight(1)
             .height(40)
             .fontSize(14)
-            .backgroundColor('#F5F5F5')
+            .backgroundColor($r('app.color.bg_page'))
             .borderRadius(20)
             .padding({ left: 16, right: 16 })
             .onChange((value: string) => { this.sendText = value; })
 
           Text('发送')
             .fontSize(15)
-            .fontColor('#FF5A5F')
+            .fontColor($r('app.color.brand'))
             .fontWeight(FontWeight.Medium)
             .padding({ left: 12, right: 8 })
             .onClick(() => this.onSendComment())
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 8 })
-        .backgroundColor('#FFFFFF')
-        .border({ width: { top: 0.5 }, color: '#F0F0F0' })
+        .backgroundColor($r('app.color.bg_card'))
+        .border({ width: { top: 0.5 }, color: $r('app.color.divider') })
       }
       .width('100%')
       .height('100%')
-      .backgroundColor('#F5F5F5')
+      .backgroundColor($r('app.color.bg_page'))
 
       // ── 顶部导航栏 ──
       Row() {
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(24)
-          .fontColor(['#333333'])
+          .fontColor([$r('app.color.text_primary')])
           .onClick(() => this.onBack())
 
         Column() {
           Text(this.albumName)
             .fontSize(17)
             .fontWeight(FontWeight.Medium)
-            .fontColor('#333333')
+            .fontColor($r('app.color.text_primary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
 
           Text(`${this.totalComments} 条评论`)
             .fontSize(11)
-            .fontColor('#999999')
+            .fontColor($r('app.color.text_tertiary'))
             .margin({ top: 1 })
         }
         .layoutWeight(1)
@@ -280,12 +280,12 @@ struct AlbumCommentPage {
       .position({ x: 0, y: 0 })
       .width('100%')
       .padding({ left: 12, right: 12, top: this.topSafeHeight + 20, bottom: 4 })
-      .backgroundColor('rgba(255, 255, 255, 0.85)')
+      .backgroundColor($r('app.color.header_bg'))
       .backdropBlur(20)
       .zIndex(10)
     }
     .width('100%')
     .height('100%')
-    .backgroundColor('#FFFFFF')
+    .backgroundColor($r('app.color.bg_card'))
   }
 }

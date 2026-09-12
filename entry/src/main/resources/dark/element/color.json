@@ -3,6 +3,134 @@
     {
       "name": "start_window_background",
       "value": "#000000"
+    },
+    {
+      "name": "bg_page",
+      "value": "#141414"
+    },
+    {
+      "name": "bg_page_alt",
+      "value": "#171717"
+    },
+    {
+      "name": "bg_card",
+      "value": "#1E1E1E"
+    },
+    {
+      "name": "bg_card_alt",
+      "value": "#232323"
+    },
+    {
+      "name": "bg_secondary",
+      "value": "#2A2A2A"
+    },
+    {
+      "name": "bg_placeholder",
+      "value": "#3A3A3A"
+    },
+    {
+      "name": "divider",
+      "value": "#333333"
+    },
+    {
+      "name": "text_primary",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#B3B3B3"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#8A8A8A"
+    },
+    {
+      "name": "text_gray",
+      "value": "#9A9A9A"
+    },
+    {
+      "name": "text_accent_warm",
+      "value": "#FFA27A"
+    },
+    {
+      "name": "text_disabled",
+      "value": "#555555"
+    },
+    {
+      "name": "text_on_accent",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "brand",
+      "value": "#FF5A5F"
+    },
+    {
+      "name": "brand_bg",
+      "value": "#3A1E20"
+    },
+    {
+      "name": "brand_border",
+      "value": "#5A2D30"
+    },
+    {
+      "name": "brand_bg_strong",
+      "value": "#472527"
+    },
+    {
+      "name": "brand_disabled",
+      "value": "#8A3A3D"
+    },
+    {
+      "name": "brand_checked",
+      "value": "#4A2123"
+    },
+    {
+      "name": "tab_active",
+      "value": "#0A84FF"
+    },
+    {
+      "name": "tab_inactive",
+      "value": "#8E8E93"
+    },
+    {
+      "name": "tab_bar_bg",
+      "value": "#2A2A2A"
+    },
+    {
+      "name": "header_bg",
+      "value": "#D9141414"
+    },
+    {
+      "name": "overlay_bg",
+      "value": "#D91E1E1E"
+    },
+    {
+      "name": "scrim",
+      "value": "#66000000"
+    },
+    {
+      "name": "status_done",
+      "value": "#5CBD6A"
+    },
+    {
+      "name": "status_done_bg",
+      "value": "#1E3322"
+    },
+    {
+      "name": "status_wait",
+      "value": "#FFB84D"
+    },
+    {
+      "name": "status_wait_bg",
+      "value": "#3A2E1A"
+    },
+    {
+      "name": "status_downloading",
+      "value": "#5AA7FF"
+    },
+    {
+      "name": "status_downloading_bg",
+      "value": "#18314A"
     }
   ]
 }
