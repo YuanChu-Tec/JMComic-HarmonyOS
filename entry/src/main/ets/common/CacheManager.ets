@@ -1,4 +1,5 @@
 import { preferences } from '@kit.ArkData';
+import { Context } from '@kit.AbilityKit';
 
 /**
  * 本地缓存管理器
@@ -24,12 +25,17 @@ export class CacheManager {
   private constructor() {
   }
 
-  static async getInstance(): Promise<CacheManager> {
+  /**
+   * 获取实例
+   * @param context 非 UI 上下文（如 UIAbility）调用时需显式传入，
+   *                页面组件中可省略，内部用 getContext()
+   */
+  static async getInstance(context?: Context): Promise<CacheManager> {
     if (CacheManager.instance === null) {
       CacheManager.instance = new CacheManager();
     }
     if (CacheManager.instance.prefs === null) {
-      CacheManager.instance.prefs = await preferences.getPreferences(getContext(), CacheManager.PREF_NAME);
+      CacheManager.instance.prefs = await preferences.getPreferences(context ?? getContext(), CacheManager.PREF_NAME);
     }
     return CacheManager.instance;
   }
@@ -224,6 +230,33 @@ export class CacheManager {
     return this.getString('download_tasks', '[]');
   }
 
+  // ─── 版本更新忽略 ───
+
+  /** 用户选择「忽略此版本」后记录的版本号，等于它时不再弹更新提示 */
+  getSkipUpdateVersion(): string {
+    return this.getString('skip_update_version');
+  }
+
+  setSkipUpdateVersion(version: string): void {
+    this.put('skip_update_version', version);
+  }
+
+  // ─── 阅读模式（竖向滚动 / 横向翻页方向） ───
+  // 取值：'scroll' 竖向滚动(下)；'paged_ltr' 横向从左往右(西漫)；'paged_rtl' 横向从右往左(日漫)
+
+  /** 读取阅读模式，默认 'scroll'（竖向连续滚动） */
+  getReaderMode(): string {
+    let v = this.getString('reader_mode');
+    if (v === 'paged_ltr' || v === 'paged_rtl' || v === 'scroll') {
+      return v;
+    }
+    return 'scroll';
+  }
+
+  setReaderMode(mode: string): void {
+    this.put('reader_mode', mode);
+  }
+
   // ─── 阅读历史（已读章节标记） ───
 
   markChapterRead(albumId: number, chapterId: string): void {
@@ -245,6 +278,40 @@ export class CacheManager {
     let val = this.getString(`read_${albumId}_${chapterId}`);
     return val ? parseInt(val) : 0;
   }
+
+  // ─── 阅读位置（章节内图片索引） ───
+
+  /**
+   * 保存某章节的阅读位置（图片索引）
+   * 同时更新"最后阅读章节"，与章节级已读标记保持一致
+   */
+  saveReadPosition(albumId: number, chapterId: string, pageIndex: number, total: number): void {
+    let pos: ReadPosition = { index: pageIndex, total: total, tick: Date.now() };
+    this.putObject(`pos_${albumId}_${chapterId}`, pos);
+    // 维护该漫画已记录位置的章节列表，便于整体清空
+    let chapters = this.getObject<string[]>(`poslist_${albumId}`) || [];
+    if (!chapters.includes(chapterId)) {
+      chapters.push(chapterId);
+      this.putObject(`poslist_${albumId}`, chapters);
+    }
+    this.put(`lastread_${albumId}`, chapterId);
+  }
+
+  /** 读取某章节的阅读位置，无记录返回 -1 */
+  getReadPosition(albumId: number, chapterId: string): number {
+    let pos = this.getObject<ReadPosition>(`pos_${albumId}_${chapterId}`);
+    return pos && pos.index >= 0 ? pos.index : -1;
+  }
+
+  /** 清空某本漫画的全部阅读位置 */
+  clearReadPositions(albumId: number): void {
+    let chapters = this.getObject<string[]>(`poslist_${albumId}`) || [];
+    for (let cid of chapters) {
+      this.prefs?.deleteSync(`pos_${albumId}_${cid}`);
+    }
+    this.prefs?.deleteSync(`poslist_${albumId}`);
+    this.prefs?.flushSync();
+  }
 }
 
 /** 缓存分页条目 */
@@ -253,4 +320,11 @@ export interface CachePageEntry {
   total: number;
   timestamp: number;
   extra?: string;
+}
+
+/** 阅读位置（章节内图片索引） */
+export interface ReadPosition {
+  index: number;   // 章节内图片索引
+  total: number;   // 总页数（用于校验）
+  tick: number;    // 记录时间戳
 }

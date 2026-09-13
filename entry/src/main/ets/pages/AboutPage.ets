@@ -2,6 +2,7 @@ import { router } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { common, Want } from '@kit.AbilityKit';
 import { ApiService } from '../network/ApiService';
+import { UpdateManager, RELEASES_PAGE_URL } from '../common/UpdateManager';
 
 /**
  * 防失联页面 — 展示官方及开发者联系方式
@@ -10,7 +11,15 @@ import { ApiService } from '../network/ApiService';
 @Component
 struct AboutPage {
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
+  @State currentVersion: string = '';
+  @State latestVersion: string = '';
+  @State versionLoading: boolean = false;
+  @State versionError: boolean = false;
   private apiService: ApiService = ApiService.getInstance();
+
+  aboutToAppear(): void {
+    this.loadVersions();
+  }
 
   build() {
     Column() {
@@ -218,6 +227,73 @@ struct AboutPage {
           .borderRadius(12)
           .margin({ top: 16 })
 
+          // ── 版本 ──
+          Column() {
+            Text('版本')
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_primary'))
+              .margin({ bottom: 16 })
+
+            Row() {
+              Text('当前版本')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .width(80)
+
+              Text(this.currentVersion ? 'JMComic' + this.currentVersion : '未知')
+                .fontSize(14)
+                .fontColor($r('app.color.text_primary'))
+                .layoutWeight(1)
+            }
+            .width('100%')
+            .padding({ top: 8, bottom: 8 })
+
+            Row() {
+              Text('最新版本')
+                .fontSize(14)
+                .fontColor($r('app.color.text_secondary'))
+                .width(80)
+
+              if (this.versionLoading) {
+                LoadingProgress()
+                  .width(16)
+                  .height(16)
+                  .color($r('app.color.brand'))
+              } else if (this.versionError) {
+                Text('获取失败，点击重试')
+                  .fontSize(14)
+                  .fontColor($r('app.color.brand'))
+                  .layoutWeight(1)
+                  .onClick(() => this.loadVersions())
+              } else {
+                Text(this.latestVersion || '未知')
+                  .fontSize(14)
+                  .fontColor($r('app.color.text_primary'))
+                  .layoutWeight(1)
+              }
+            }
+            .width('100%')
+            .padding({ top: 8, bottom: 8 })
+
+            if (this.hasNewVersion()) {
+              Row() {
+                Text('发现新版本，点击前往下载')
+                  .fontSize(14)
+                  .fontColor($r('app.color.brand'))
+                  .decoration({ type: TextDecorationType.Underline, color: $r('app.color.brand') })
+                  .onClick(() => this.openUrl(RELEASES_PAGE_URL))
+              }
+              .width('100%')
+              .padding({ top: 8, bottom: 8 })
+            }
+          }
+          .width('100%')
+          .padding(20)
+          .backgroundColor($r('app.color.bg_card'))
+          .borderRadius(12)
+          .margin({ top: 16 })
+
           Blank().height(32)
         }
         .width('100%')
@@ -231,6 +307,26 @@ struct AboutPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.bg_page'))
+  }
+
+  /** 读取当前版本 + 拉取最新版本 */
+  private async loadVersions(): Promise<void> {
+    let mgr = UpdateManager.getInstance();
+    this.currentVersion = mgr.getCurrentVersion();
+    this.versionLoading = true;
+    this.versionError = false;
+    let latest = await mgr.fetchLatestVersion();
+    this.versionLoading = false;
+    if (!latest) {
+      this.versionError = true;
+    } else {
+      this.latestVersion = latest;
+    }
+  }
+
+  /** 是否存在新版本 */
+  private hasNewVersion(): boolean {
+    return UpdateManager.getInstance().isNewer(this.latestVersion, this.currentVersion);
   }
 
   openUrl(url: string): void {

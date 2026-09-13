@@ -42,11 +42,19 @@ struct HomePage {
   @State sections: JmPromoteSection[] = [];
   @State latestAlbums: JmAlbumInfo[] = [];
   @State isLoading: boolean = true;
+  @State loadFailed: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
 
   async aboutToAppear(): Promise<void> {
+    await this.loadData();
+  }
+
+  /** 加载首页数据；失败时可由「重新加载」按钮再次调用 */
+  async loadData(): Promise<void> {
+    this.isLoading = true;
+    this.loadFailed = false;
     try {
       let results = await Promise.all([
         this.apiService.getPromote(),
@@ -62,6 +70,7 @@ struct HomePage {
       }
     } catch (err) {
       console.error('[HomePage] load error:', JSON.stringify(err));
+      this.loadFailed = true;
     } finally {
       this.isLoading = false;
     }
@@ -88,6 +97,24 @@ struct HomePage {
               .fontSize(14)
               .fontColor($r('app.color.text_tertiary'))
               .margin({ top: 12 })
+          }
+          .width('100%')
+          .height(300)
+          .justifyContent(FlexAlign.Center)
+        } else if (this.loadFailed && this.sections.length === 0 && this.latestAlbums.length === 0) {
+          Column() {
+            Text('加载失败')
+              .fontSize(16)
+              .fontColor($r('app.color.text_tertiary'))
+            Button('重新加载')
+              .fontSize(14)
+              .fontColor($r('app.color.text_on_accent'))
+              .backgroundColor($r('app.color.brand'))
+              .borderRadius(18)
+              .padding({ left: 24, right: 24 })
+              .height(36)
+              .margin({ top: 16 })
+              .onClick(() => this.loadData())
           }
           .width('100%')
           .height(300)
@@ -210,7 +237,9 @@ struct ProfilePage {
   @State favHasMore: boolean = true;
   @State favTotal: number = 0;
   @State favNeedLoad: boolean = false;
+  @State favLoadFailed: boolean = false;
   @State watchTotal: number = 0;
+  @State watchLoadFailed: boolean = false;
   @State watchAlbums: AlbumViewModel[] = [];
   @State watchIsLoading: boolean = false;
   @State watchCurrentPage: number = 1;
@@ -307,6 +336,7 @@ struct ProfilePage {
   async loadFavorites(): Promise<void> {
     if (this.favIsLoading) return;
     this.favIsLoading = true;
+    this.favLoadFailed = false;
     try {
       let resp = await this.apiService.getFavorites(this.favCurrentPage, this.favCurrentFolderId);
       if (resp.code === 200 && resp.data) {
@@ -332,6 +362,7 @@ struct ProfilePage {
       }
     } catch (err) {
       console.error('[ProfilePage] loadFavorites error:', JSON.stringify(err));
+      this.favLoadFailed = true;
     } finally {
       this.favIsLoading = false;
     }
@@ -349,6 +380,7 @@ struct ProfilePage {
   async loadWatchHistory(): Promise<void> {
     if (this.watchIsLoading) return;
     this.watchIsLoading = true;
+    this.watchLoadFailed = false;
     try {
       let resp = await this.apiService.getWatchList(this.watchCurrentPage);
       if (resp.code === 200 && resp.data) {
@@ -378,6 +410,7 @@ struct ProfilePage {
       }
     } catch (err) {
       console.error('[ProfilePage] loadWatchHistory error:', JSON.stringify(err));
+      this.watchLoadFailed = true;
     } finally {
       this.watchIsLoading = false;
       // 本地计算历史总数
@@ -478,6 +511,9 @@ struct ProfilePage {
           .justifyContent(FlexAlign.Center)
           .margin({ top: 24 })
 
+          // ── 主题设置（黑白模式） ──
+          ThemeSetting()
+
           // ── 收藏/历史列表 ──
           Tabs({ controller: this.tabsController, barPosition: BarPosition.Start }) {
             // 收藏 Tab
@@ -525,6 +561,22 @@ struct ProfilePage {
                       .width('100%')
                       .height(300)
                       .justifyContent(FlexAlign.Center)
+                    } else if (this.favAlbums.length === 0 && this.favLoadFailed) {
+                      Column() {
+                        Text('加载失败').fontSize(16).fontColor($r('app.color.text_tertiary'))
+                        Button('重新加载')
+                          .fontSize(14)
+                          .fontColor($r('app.color.text_on_accent'))
+                          .backgroundColor($r('app.color.brand'))
+                          .borderRadius(18)
+                          .padding({ left: 24, right: 24 })
+                          .height(36)
+                          .margin({ top: 16 })
+                          .onClick(() => this.loadFavorites())
+                      }
+                      .width('100%')
+                      .height(200)
+                      .justifyContent(FlexAlign.Center)
                     } else if (this.favAlbums.length === 0) {
                       Column() {
                         Text('暂无收藏').fontSize(16).fontColor($r('app.color.text_tertiary'))
@@ -555,6 +607,15 @@ struct ProfilePage {
                       }
                       .width('100%').justifyContent(FlexAlign.Center)
                       .padding({ top: 12, bottom: 20 })
+                    }
+                    if (this.favLoadFailed && this.favAlbums.length > 0) {
+                      Row() {
+                        Text('加载失败').fontSize(12).fontColor($r('app.color.text_tertiary'))
+                        Text('重新加载').fontSize(12).fontColor($r('app.color.brand')).margin({ left: 12 })
+                      }
+                      .width('100%').justifyContent(FlexAlign.Center)
+                      .padding({ top: 12, bottom: 20 })
+                      .onClick(() => this.loadFavorites())
                     }
                     if (!this.favHasMore && this.favAlbums.length > 0) {
                       Text('没有更多了').fontSize(12).fontColor($r('app.color.text_disabled'))
@@ -594,6 +655,22 @@ struct ProfilePage {
                       .width('100%')
                       .height(300)
                       .justifyContent(FlexAlign.Center)
+                    } else if (this.watchAlbums.length === 0 && this.watchLoadFailed) {
+                      Column() {
+                        Text('加载失败').fontSize(16).fontColor($r('app.color.text_tertiary'))
+                        Button('重新加载')
+                          .fontSize(14)
+                          .fontColor($r('app.color.text_on_accent'))
+                          .backgroundColor($r('app.color.brand'))
+                          .borderRadius(18)
+                          .padding({ left: 24, right: 24 })
+                          .height(36)
+                          .margin({ top: 16 })
+                          .onClick(() => this.loadWatchHistory())
+                      }
+                      .width('100%')
+                      .height(200)
+                      .justifyContent(FlexAlign.Center)
                     } else if (this.watchAlbums.length === 0) {
                       Column() {
                         Text('暂无观看记录').fontSize(16).fontColor($r('app.color.text_tertiary'))
@@ -624,6 +701,15 @@ struct ProfilePage {
                       }
                       .width('100%').justifyContent(FlexAlign.Center)
                       .padding({ top: 12, bottom: 20 })
+                    }
+                    if (this.watchLoadFailed && this.watchAlbums.length > 0) {
+                      Row() {
+                        Text('加载失败').fontSize(12).fontColor($r('app.color.text_tertiary'))
+                        Text('重新加载').fontSize(12).fontColor($r('app.color.brand')).margin({ left: 12 })
+                      }
+                      .width('100%').justifyContent(FlexAlign.Center)
+                      .padding({ top: 12, bottom: 20 })
+                      .onClick(() => this.loadWatchHistory())
                     }
                     if (!this.watchHasMore && this.watchAlbums.length > 0) {
                       Text('没有更多了').fontSize(12).fontColor($r('app.color.text_disabled'))
@@ -704,10 +790,10 @@ struct ProfilePage {
           .height(44)
           .margin({ top: 16 })
           .onClick(() => this.onClearCache())
-        }
 
-        // ── 主题设置（黑白模式） ──
-        ThemeSetting()
+          // ── 主题设置（黑白模式） ──
+          ThemeSetting()
+        }
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: this.topSafeHeight + 40 })
@@ -779,6 +865,7 @@ struct CategoryPage {
   @State currentCategory: string = CATEGORY_ALL;
   @State currentOrder: string = ORDER_BY_LATEST;
   @State searchKeyword: string = '';
+  @State loadFailed: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private apiService: ApiService = ApiService.getInstance();
@@ -851,6 +938,7 @@ struct CategoryPage {
   async loadAlbums(): Promise<void> {
     if (this.isLoading) return;
     this.isLoading = true;
+    this.loadFailed = false;
 
     try {
       let resp = await this.apiService.getCategoryList(
@@ -882,9 +970,11 @@ struct CategoryPage {
         this.saveToCache(this.currentPage, vms, parseInt(data.total) || 0);
       } else {
         console.error(`[CategoryPage] getCategoryList failed: code=${resp.code}, message=${resp.message}`);
+        this.loadFailed = true;
       }
     } catch (err) {
       console.error('loadAlbums error:', JSON.stringify(err));
+      this.loadFailed = true;
     } finally {
       this.isLoading = false;
     }
@@ -977,6 +1067,24 @@ struct CategoryPage {
           .width('100%')
           .height('100%')
           .justifyContent(FlexAlign.Center)
+        } else if (this.albums.length === 0 && this.loadFailed) {
+          Column() {
+            Text('加载失败')
+              .fontSize(16)
+              .fontColor($r('app.color.text_tertiary'))
+            Button('重新加载')
+              .fontSize(14)
+              .fontColor($r('app.color.text_on_accent'))
+              .backgroundColor($r('app.color.brand'))
+              .borderRadius(18)
+              .padding({ left: 24, right: 24 })
+              .height(36)
+              .margin({ top: 16 })
+              .onClick(() => this.loadAlbums())
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
         } else if (this.albums.length === 0) {
           Column() {
             Text('暂无数据')
@@ -988,18 +1096,52 @@ struct CategoryPage {
           .justifyContent(FlexAlign.Center)
         } else {
           Scroll() {
-            Grid() {
-              ForEach(this.albums, (album: AlbumViewModel, index: number) => {
-                GridItem() {
-                  this.AlbumCard(album)
+            Column() {
+              Grid() {
+                ForEach(this.albums, (album: AlbumViewModel, index: number) => {
+                  GridItem() {
+                    this.AlbumCard(album)
+                  }
+                  .onClick(() => this.onAlbumClick(album))
+                })
+              }
+              .columnsTemplate(this.isTablet ? '1fr 1fr 1fr 1fr' : '1fr 1fr')
+              .columnsGap(10)
+              .rowsGap(10)
+              .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+
+              // 加载更多失败时给出重试入口
+              if (this.loadFailed) {
+                Row() {
+                  Text('加载失败')
+                    .fontSize(13)
+                    .fontColor($r('app.color.text_tertiary'))
+                  Text('重新加载')
+                    .fontSize(13)
+                    .fontColor($r('app.color.brand'))
+                    .margin({ left: 12 })
                 }
-                .onClick(() => this.onAlbumClick(album))
-              })
+                .width('100%')
+                .height(48)
+                .justifyContent(FlexAlign.Center)
+                .onClick(() => this.loadAlbums())
+              } else if (this.isLoading) {
+                Row() {
+                  LoadingProgress()
+                    .width(20)
+                    .height(20)
+                    .color($r('app.color.brand'))
+                  Text('加载中...')
+                    .fontSize(13)
+                    .fontColor($r('app.color.text_tertiary'))
+                    .margin({ left: 8 })
+                }
+                .width('100%')
+                .height(48)
+                .justifyContent(FlexAlign.Center)
+              }
             }
-            .columnsTemplate(this.isTablet ? '1fr 1fr 1fr 1fr' : '1fr 1fr')
-            .columnsGap(10)
-            .rowsGap(10)
-            .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+            .width('100%')
           }
           .width('100%')
           .height('100%')
@@ -1141,6 +1283,7 @@ struct ForumPage {
   @State totalComments: number = 0;
   @State hasMore: boolean = true;
   @State currentMode: string = COMMENT_MODE_ALL;
+  @State loadFailed: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private apiService: ApiService = ApiService.getInstance();
@@ -1157,6 +1300,7 @@ struct ForumPage {
 
   async loadComments(): Promise<void> {
     this.isLoading = true;
+    this.loadFailed = false;
     try {
       let data: CommentPageData = await this.apiService.getComments(this.currentMode, '', this.currentPage);
       this.totalComments = data.total;
@@ -1164,6 +1308,7 @@ struct ForumPage {
       this.hasMore = this.comments.length < this.totalComments;
     } catch (err) {
       console.error('[ForumPage] loadComments error:', JSON.stringify(err));
+      this.loadFailed = true;
     } finally {
       this.isLoading = false;
     }
@@ -1172,6 +1317,7 @@ struct ForumPage {
   async loadMoreComments(): Promise<void> {
     if (!this.hasMore || this.isLoadingMore) return;
     this.isLoadingMore = true;
+    this.loadFailed = false;
     this.currentPage++;
     try {
       let data: CommentPageData = await this.apiService.getComments(this.currentMode, '', this.currentPage);
@@ -1181,6 +1327,7 @@ struct ForumPage {
     } catch (err) {
       console.error('[ForumPage] loadMoreComments error:', JSON.stringify(err));
       this.currentPage--;
+      this.loadFailed = true;
     } finally {
       this.isLoadingMore = false;
     }
@@ -1236,6 +1383,24 @@ struct ForumPage {
         .width('100%')
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
+      } else if (this.comments.length === 0 && this.loadFailed) {
+        Column() {
+          Text('加载失败')
+            .fontSize(16)
+            .fontColor($r('app.color.text_tertiary'))
+          Button('重新加载')
+            .fontSize(14)
+            .fontColor($r('app.color.text_on_accent'))
+            .backgroundColor($r('app.color.brand'))
+            .borderRadius(18)
+            .padding({ left: 24, right: 24 })
+            .height(36)
+            .margin({ top: 16 })
+            .onClick(() => this.loadComments())
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
       } else if (this.comments.length === 0) {
         Column() {
           Text('暂无评论')
@@ -1271,6 +1436,20 @@ struct ForumPage {
               .width('100%')
               .justifyContent(FlexAlign.Center)
               .padding({ top: 16, bottom: 16 })
+            } else if (this.loadFailed) {
+              Row() {
+                Text('加载失败')
+                  .fontSize(13)
+                  .fontColor($r('app.color.text_tertiary'))
+                Text('重新加载')
+                  .fontSize(13)
+                  .fontColor($r('app.color.brand'))
+                  .margin({ left: 12 })
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding({ top: 16, bottom: 16 })
+              .onClick(() => this.loadMoreComments())
             } else if (this.hasMore) {
               Text('上拉加载更多')
                 .fontSize(13)

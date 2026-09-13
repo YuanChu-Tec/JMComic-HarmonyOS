@@ -1,4 +1,4 @@
-import { router, display } from '@kit.ArkUI';
+import { router, display, promptAction } from '@kit.ArkUI';
 import { ApiService } from '../network/ApiService';
 import { AlbumViewModel, JmAlbumInfo, IAlbumViewModelJSON } from '../models/Album';
 import { CacheManager } from '../common/CacheManager';
@@ -13,6 +13,7 @@ struct SearchPage {
   @State currentPage: number = 1;
   @State hasMore: boolean = false;
   @State searchHistory: string[] = [];
+  @State searchFailed: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private apiService: ApiService = ApiService.getInstance();
@@ -49,9 +50,12 @@ struct SearchPage {
           });
         } else {
           console.error(`[SearchPage] album id=${kw} not found: ${resp.message}`);
+          this.showToast('未找到该漫画');
         }
       } catch (err) {
         console.error(`[SearchPage] album id=${kw} error: ${JSON.stringify(err)}`);
+        this.searchFailed = true;
+        this.showToast('网络异常，请重试');
       } finally {
         this.isLoading = false;
       }
@@ -88,6 +92,7 @@ struct SearchPage {
     }
 
     this.isLoading = true;
+    this.searchFailed = false;
 
     try {
       let resp = await this.apiService.search(kw, this.currentPage);
@@ -116,8 +121,17 @@ struct SearchPage {
       }
     } catch (err) {
       console.error('search error:', JSON.stringify(err));
+      this.searchFailed = true;
     } finally {
       this.isLoading = false;
+    }
+  }
+
+  private showToast(message: string): void {
+    try {
+      promptAction.showToast({ message: message, duration: 2000 });
+    } catch (e) {
+      console.error('[SearchPage] showToast error: ' + JSON.stringify(e));
     }
   }
 
@@ -172,6 +186,24 @@ struct SearchPage {
           .width('100%')
           .height('100%')
           .justifyContent(FlexAlign.Center)
+        } else if (this.searchFailed && this.hasSearched && this.albums.length === 0) {
+          Column() {
+            Text('加载失败')
+              .fontSize(16)
+              .fontColor($r('app.color.text_tertiary'))
+            Button('重新加载')
+              .fontSize(14)
+              .fontColor($r('app.color.text_on_accent'))
+              .backgroundColor($r('app.color.brand'))
+              .borderRadius(18)
+              .padding({ left: 24, right: 24 })
+              .height(36)
+              .margin({ top: 16 })
+              .onClick(() => this.doSearch(true))
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
         } else if (this.hasSearched && this.albums.length === 0) {
           Column() {
             SymbolGlyph($r('sys.symbol.magnifyingglass'))
@@ -187,6 +219,20 @@ struct SearchPage {
           .justifyContent(FlexAlign.Center)
         } else if (!this.hasSearched) {
           Column() {
+            // 搜索语法提示：+标签 包含，-标签 排除，空格分隔多个条件
+            Row() {
+              Text('+标签 包含 · -标签 排除 · 空格分隔')
+                .fontSize(12)
+                .fontColor('#999999')
+                .layoutWeight(1)
+
+              Text('示例【+全彩 +人妻】')
+                .fontSize(12)
+                .fontColor('#999999')
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 10, bottom: 2 })
+
             if (this.searchHistory.length > 0) {
               // 搜索历史
               Column() {
@@ -273,6 +319,20 @@ struct SearchPage {
                 .width('100%')
                 .justifyContent(FlexAlign.Center)
                 .padding({ top: 16, bottom: 16 })
+              } else if (this.searchFailed) {
+                Row() {
+                  Text('加载失败')
+                    .fontSize(13)
+                    .fontColor($r('app.color.text_tertiary'))
+                  Text('重新加载')
+                    .fontSize(13)
+                    .fontColor($r('app.color.brand'))
+                    .margin({ left: 12 })
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.Center)
+                .padding({ top: 16, bottom: 16 })
+                .onClick(() => this.doSearch(false))
               } else if (!this.hasMore) {
                 Text('没有更多了')
                   .fontSize(13)
