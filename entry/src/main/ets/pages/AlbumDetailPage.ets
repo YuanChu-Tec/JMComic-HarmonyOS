@@ -938,9 +938,18 @@ struct AlbumDetailPage {
         .scrollBar(BarState.Off)
       } else {
         Column() {
-          Text('加载失败，请重试')
+          Text('加载失败')
             .fontSize(16)
             .fontColor($r('app.color.text_tertiary'))
+          Button('重新加载')
+            .fontSize(14)
+            .fontColor($r('app.color.text_on_accent'))
+            .backgroundColor($r('app.color.brand'))
+            .borderRadius(18)
+            .padding({ left: 24, right: 24 })
+            .height(36)
+            .margin({ top: 16 })
+            .onClick(() => this.loadDetail())
         }
         .width('100%')
         .height('100%')

@@ -23,6 +23,7 @@ struct AlbumCommentPage {
   @State hasMore: boolean = true;
   @State sendText: string = '';
   @State albumName: string = '评论';
+  @State loadFailed: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private albumId: number = 0;
@@ -44,6 +45,7 @@ struct AlbumCommentPage {
 
   async loadComments(): Promise<void> {
     this.isLoading = true;
+    this.loadFailed = false;
     try {
       let data: CommentPageData = await this.apiService.getComments('manhua', this.albumId.toString(), this.currentPage);
       this.totalComments = data.total;
@@ -51,6 +53,7 @@ struct AlbumCommentPage {
       this.hasMore = this.comments.length < this.totalComments;
     } catch (err) {
       console.error('[AlbumCommentPage] loadComments error:', JSON.stringify(err));
+      this.loadFailed = true;
     } finally {
       this.isLoading = false;
     }
@@ -59,6 +62,7 @@ struct AlbumCommentPage {
   async loadMoreComments(): Promise<void> {
     if (!this.hasMore || this.isLoadingMore) return;
     this.isLoadingMore = true;
+    this.loadFailed = false;
     this.currentPage++;
     try {
       let data: CommentPageData = await this.apiService.getComments('manhua', this.albumId.toString(), this.currentPage);
@@ -68,6 +72,7 @@ struct AlbumCommentPage {
     } catch (err) {
       console.error('[AlbumCommentPage] loadMoreComments error:', JSON.stringify(err));
       this.currentPage--;
+      this.loadFailed = true;
     } finally {
       this.isLoadingMore = false;
     }
@@ -85,19 +90,21 @@ struct AlbumCommentPage {
     }
     try {
       let msg = await this.apiService.sendComment(this.albumId.toString(), this.sendText.trim(), '');
+      console.info('[AlbumCommentPage] sendComment ok, msg=' + msg);
       this.sendText = '';
       // 发送成功后刷新评论
       this.currentPage = 1;
       await this.loadComments();
       try {
-        await promptAction.showToast({ message: msg || '评论成功', duration: 1500 });
+        await promptAction.showToast({ message: msg || '评论成功', duration: 2000 });
       } catch (e) {
-        // ignore
+        console.error('[AlbumCommentPage] showToast error:', JSON.stringify(e));
       }
     } catch (err) {
+      let errMsg = (err as Error).message || '评论失败';
       console.error('[AlbumCommentPage] sendComment error:', JSON.stringify(err));
       try {
-        await promptAction.showToast({ message: '评论失败', duration: 2000 });
+        await promptAction.showToast({ message: errMsg, duration: 2000 });
       } catch (e) {
         // ignore
       }
@@ -154,6 +161,24 @@ struct AlbumCommentPage {
           .width('100%')
           .layoutWeight(1)
           .justifyContent(FlexAlign.Center)
+        } else if (this.comments.length === 0 && this.loadFailed) {
+          Column() {
+            Text('加载失败')
+              .fontSize(16)
+              .fontColor($r('app.color.text_tertiary'))
+            Button('重新加载')
+              .fontSize(14)
+              .fontColor($r('app.color.text_on_accent'))
+              .backgroundColor($r('app.color.brand'))
+              .borderRadius(18)
+              .padding({ left: 24, right: 24 })
+              .height(36)
+              .margin({ top: 16 })
+              .onClick(() => this.loadComments())
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
         } else if (this.comments.length === 0) {
           Column() {
             Text('暂无评论')
@@ -191,6 +216,20 @@ struct AlbumCommentPage {
                 .width('100%')
                 .justifyContent(FlexAlign.Center)
                 .padding({ top: 16, bottom: 16 })
+              } else if (this.loadFailed) {
+                Row() {
+                  Text('加载失败')
+                    .fontSize(13)
+                    .fontColor($r('app.color.text_tertiary'))
+                  Text('重新加载')
+                    .fontSize(13)
+                    .fontColor($r('app.color.brand'))
+                    .margin({ left: 12 })
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.Center)
+                .padding({ top: 16, bottom: 16 })
+                .onClick(() => this.loadMoreComments())
               } else if (this.hasMore) {
                 Text('上拉加载更多')
                   .fontSize(13)

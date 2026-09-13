@@ -733,6 +733,9 @@ export class ApiService {
 
     // 评论接口也是加密响应
     let resp = await this.decryptResponse<CommentPageData>(respStr, ts);
+    let pageData: CommentPageData | null = resp.data as CommentPageData;
+    let listLen: number = pageData && pageData.list ? pageData.list.length : 0;
+    console.info(`[getComments] code=${resp.code} message=${resp.message} total=${pageData ? pageData.total : -1} listLen=${listLen}`);
     if (resp.code !== 200) {
       throw new Error(resp.message || '获取评论失败');
     }
@@ -771,11 +774,16 @@ export class ApiService {
     let body = ApiService.buildFormBody(bodyParams);
 
     let respStr = await this.requestApi(API_COMMENT, 'POST', body, headers);
+    console.info(`[sendComment] raw resp: ${respStr.substring(0, 600)}`);
     let resp = await this.decryptResponse<SendCommentData>(respStr, ts);
+    let sendData: SendCommentData | null = resp.data as SendCommentData;
+    console.info(`[sendComment] code=${resp.code} message=${resp.message} data=${JSON.stringify(sendData)}`);
     if (resp.code !== 200) {
       throw new Error(resp.message || '发送评论失败');
     }
-    return (resp.data as SendCommentData).msg || '评论成功';
+    let msg: string = sendData ? (sendData.msg || '评论成功') : '评论成功';
+    console.info(`[sendComment] success, return msg=${msg}`);
+    return msg;
   }
 
   // ─── 辅助方法 ───

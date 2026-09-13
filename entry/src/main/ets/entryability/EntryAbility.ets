@@ -3,6 +3,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { ThemeManager } from '../common/ThemeManager';
+import { UpdateManager, RELEASES_PAGE_URL } from '../common/UpdateManager';
+import { CacheManager } from '../common/CacheManager';
 
 const DOMAIN = 0x0000;
 
@@ -59,7 +61,61 @@ export default class EntryAbility extends UIAbility {
           return;
         }
         hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+        // 页面加载完成后再检查更新，避免弹窗时 UI 上下文还未就绪
+        this.checkAppUpdate(windowStage);
       });
+    });
+  }
+
+  /**
+   * 启动时检查版本更新：当前版本落后于最新版本则弹窗提示
+   */
+  private async checkAppUpdate(windowStage: window.WindowStage): Promise<void> {
+    let mgr = UpdateManager.getInstance();
+    let current = mgr.getCurrentVersion();
+    let latest = await mgr.fetchLatestVersion();
+    if (!mgr.isNewer(latest, current)) {
+      hilog.info(DOMAIN, 'testTag', `No update available, current=${current}, latest=${latest}`);
+      return;
+    }
+
+    let cache = await CacheManager.getInstance(this.context);
+    // 用户已忽略过该版本，不再提示（换版本号后会重新提示）
+    if (cache.getSkipUpdateVersion() === latest) {
+      hilog.info(DOMAIN, 'testTag', `Update ${latest} was skipped by user`);
+      return;
+    }
+
+    try {
+      let uiContext = windowStage.getMainWindowSync().getUIContext();
+      let result = await uiContext.getPromptAction().showDialog({
+        title: '发现新版本',
+        message: `当前版本：JMComic ${current}\n最新版本：${latest}\n\n是否前往下载更新？`,
+        buttons: [
+          { text: '取消', color: '#999999' },
+          { text: '忽略此版本', color: '#999999' },
+          { text: '前往下载', color: '#FF5A5F' }
+        ]
+      });
+      if (result.index === 1) {
+        cache.setSkipUpdateVersion(latest);
+      } else if (result.index === 2) {
+        this.openUrl(RELEASES_PAGE_URL);
+      }
+    } catch (err) {
+      hilog.error(DOMAIN, 'testTag', 'Show update dialog failed: ' + JSON.stringify(err));
+    }
+  }
+
+  /** 用系统浏览器打开下载页 */
+  private openUrl(url: string): void {
+    let want: Want = {
+      action: 'ohos.want.action.viewData',
+      entities: ['entity.system.browser'],
+      uri: url
+    };
+    this.context.startAbility(want).catch((err: Error) => {
+      hilog.error(DOMAIN, 'testTag', 'Open download page failed: ' + err.message);
     });
   }
 

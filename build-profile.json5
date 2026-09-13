@@ -7,11 +7,11 @@
         "material": {
           "certpath": "C:\\Users\\28483\\.ohos\\config\\default_JMComic_YWPxfgpYttwYWW_cvP5Upp6zE5vLo6FkHCTMPh7GFwk=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "00000019E167DA99B2466E586335696ECEEF829F46A8434F2E130EF1FC785BCF37CF8444191BAE5950",
+          "keyPassword": "0000001B03065D67E6945AB58511AF9A4FBED49F7BC76C2B2EBE5CF94CD61E2FB9EDA2A6B7329185CFCA20",
           "profile": "C:\\Users\\28483\\.ohos\\config\\default_JMComic_YWPxfgpYttwYWW_cvP5Upp6zE5vLo6FkHCTMPh7GFwk=.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "C:\\Users\\28483\\.ohos\\config\\default_JMComic_YWPxfgpYttwYWW_cvP5Upp6zE5vLo6FkHCTMPh7GFwk=.p12",
-          "storePassword": "000000194AE85E9701DD088155CFEBB8DB6C78ED0CDF3199A1F5E2E105EC03E819BCE2B48431526A06"
+          "storePassword": "0000001B2B93332D039AB802600AA7165A63D126516BE6216424EE44C96BF048E1AAAD0EB0C0952D444429"
         }
       }
     ],
@@ -19,7 +19,7 @@
       {
         "name": "default",
         "signingConfig": "default",
-        "targetSdkVersion": "6.1.1(24)",
+        "targetSdkVersion": "26.0.0",
         "compatibleSdkVersion": "6.1.0(23)",
         "runtimeOS": "HarmonyOS",
         "buildOption": {
