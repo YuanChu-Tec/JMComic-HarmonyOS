@@ -820,13 +820,25 @@ export class ApiService {
    * 对应 QT: v = json.loads(response); result = ParseData(v.get("data"))
    */
   private async decryptResponse<T>(respStr: string, ts: string): Promise<JmApiResponse<T>> {
+    // 0. 清洗响应文本：服务器可能在 JSON 开头返回 UTF-8 BOM（U+FEFF），
+    //    ArkTS 的 JSON.parse 不接受前置 BOM，不剥离会直接抛 SyntaxError
+    let cleaned = HttpClient.sanitizeResponseText(respStr);
+
     // 1. 解析外层 JSON
     let outer: JmApiResponse<T>;
     try {
-      outer = JSON.parse(respStr) as JmApiResponse<T>;
-    } catch (_) {
-      // 整个响应不是 JSON，尝试整体解密
-      let decrypted = await CryptoUtils.decodeRespData(respStr, ts);
+      outer = JSON.parse(cleaned) as JmApiResponse<T>;
+    } catch (parseErr) {
+      // 外层不是合法 JSON。只有当整体确实是合法 base64 时才走"整体解密"兜底，
+      // 否则直接抛出原始响应特征的错误，避免把 JSON 原文当 base64 解密
+      // 报出 "The input string contains unsupported characters" 这类难以定位的错误。
+      if (!ApiService.isBase64(cleaned)) {
+        console.error(`[ApiService] decryptResponse 响应非 JSON 且非 base64, ts=${ts}, 长度=${cleaned.length}`);
+        console.error(`[ApiService] 响应前200字符: ${cleaned.substring(0, 200)}`);
+        console.error(`[ApiService] JSON.parse 错误: ${JSON.stringify(parseErr)}`);
+        throw new Error(`响应格式异常（既不是 JSON 也不是 base64）: ${cleaned.substring(0, 200)}`);
+      }
+      let decrypted = await CryptoUtils.decodeRespData(cleaned, ts);
       return JSON.parse(decrypted) as JmApiResponse<T>;
     }
 
@@ -849,6 +861,18 @@ export class ApiService {
     }
 
     return outer;
+  }
+
+  /**
+   * 判断字符串是否为合法的 base64 文本
+   * 用于区分「响应整体被加密」与「响应是格式异常的明文」两种情况
+   */
+  private static isBase64(text: string): boolean {
+    if (text.length === 0) {
+      return false;
+    }
+    let pattern: RegExp = /^[A-Za-z0-9+/]+={0,2}$/;
+    return pattern.test(text);
   }
 
   /**

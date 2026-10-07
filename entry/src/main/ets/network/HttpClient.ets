@@ -202,7 +202,7 @@ export class HttpClient {
       // 只在成功响应时保存 Cookies，避免错误响应覆盖正确的 cookies
       if (response.responseCode === 200) {
         HttpClient.parseAndSaveCookies(response.header as Record<string, string | string[]>);
-        return response.result as string;
+        return HttpClient.sanitizeResponseText(response.result as string);
       }
 
       throw new Error(`HTTP ${response.responseCode}: ${url}`);
@@ -242,6 +242,25 @@ export class HttpClient {
     } finally {
       request.destroy();
     }
+  }
+
+  /**
+   * 清洗响应文本
+   *
+   * 部分服务器（JMComic CDN）返回的 JSON 会在开头带一个 UTF-8 BOM（U+FEFF，对应字节 EF BB BF），
+   * 而 ArkTS 的 JSON.parse 不接受前置 BOM，会直接抛 SyntaxError。
+   * 这里统一剥掉 BOM 及首尾空白，避免上层解析失败。
+   *
+   * @param text 原始响应文本
+   * @returns 去除 BOM 与首尾空白后的文本
+   */
+  static sanitizeResponseText(text: string): string {
+    let result = text;
+    // BOM 可能出现多次（多层代理拼接），循环剥离
+    while (result.length > 0 && result.charCodeAt(0) === 0xFEFF) {
+      result = result.substring(1);
+    }
+    return result.trim();
   }
 
   /**
