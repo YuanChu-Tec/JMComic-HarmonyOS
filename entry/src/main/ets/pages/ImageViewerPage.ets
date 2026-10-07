@@ -790,8 +790,12 @@ struct ImageViewerPage {
         }
         .width('100%')
         .height('100%')
-        // 仅缩放时允许外层 Scroll 平移；未缩放时交给内层 Swiper/List 处理手势，避免到末页被外层抢手势
-        .scrollable(this.isZoomed ? ScrollDirection.FREE : ScrollDirection.None)
+        // scrollable 必须始终为 FREE：Scroll 的双指捏合缩放由组件自身的触摸处理提供，
+        // 一旦在未缩放态置为 None，捏合会被完全禁用 → onDidZoom 不触发 → isZoomed 恒为 false
+        // → scrollable 恒为 None，形成"永远无法放大"的死锁。
+        // 未缩放时不会有抢手势问题：外层 Scroll 的内容就是内层 List/Swiper 本身（均 100% 宽高），
+        // 内容高度与视口等高，外层没有可滚动范围，滚动手势仍由内层 List/Swiper 正常处理。
+        .scrollable(ScrollDirection.FREE)
         .maxZoomScale(3.0)
         .minZoomScale(1.0)
         .zoomScale(this.zoomScale)
