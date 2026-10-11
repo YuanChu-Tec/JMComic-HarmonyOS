@@ -37,10 +37,10 @@ export interface IAlbumViewModelJSON {
 /** 首页推荐分区 */
 export interface JmPromoteSection {
   title: string;
-  content: JmAlbumInfo[];
+  content: RespJmAlbumInfo[];
 }
 
-export interface JmAlbumInfo {
+export interface RespJmAlbumInfo {
   id: number | string;     // API 返回字符串，需兼容
   name: string;            // 作品名
   author: string | string[];  // 作者（可能是字符串或数组）
@@ -53,6 +53,37 @@ export interface JmAlbumInfo {
   likes?: string;          // 喜欢数
   addtime?: string;        // 添加时间 (时间戳)
   series?: JmAlbumSeries[];
+}
+
+export interface JmAlbumInfo {
+  id: number;     // API 返回字符串，需兼容
+  name: string;            // 作品名
+  author: string[];  // 作者（可能是字符串或数组）
+  image: string;           // 封面图文件名
+  description: string;     // 描述
+  category: string;
+  // 以下字段仅在 album 详情 API 中返回，列表 API 中不存在
+  total_views?: string;    // 总观看次数
+  total_picture?: string;  // 总图片数
+  likes?: string;          // 喜欢数
+  addtime?: string;        // 添加时间 (时间戳)
+  series?: JmAlbumSeries[];
+}
+
+export function respToJmAlbumInfo(info: RespJmAlbumInfo):JmAlbumInfo {
+	return {
+    id: (typeof info.id === 'number' ? (info.id as number) : Number(info.id)) ?? 0,
+    name: info.name,
+    author: (typeof info.author === 'string' ? [info.author as string] : (info.author as string[])) ?? [],
+    image: info.image,
+    description: info.description,
+    category: (typeof info.category === 'string' ? (info.category as string) : info.category.title) ?? '',
+    total_views: info.total_views,
+    total_picture: info.total_picture,
+    likes: info.likes,
+    addtime: info.addtime,
+    series: info.series
+  };
 }
 
 export interface CategoryBean {
@@ -143,7 +174,7 @@ export interface JmApiResponse<T> {
 
 /** 搜索/列表响应 data 结构 */
 export interface SearchResultData {
-  content: JmAlbumInfo[];
+  content: RespJmAlbumInfo[];
   total: string;
 }
 
@@ -192,7 +223,7 @@ export interface FavoriteActionResult {
 
 /** 观看记录列表API响应 data */
 export interface WatchListData {
-  list: JmAlbumInfo[];
+  list: RespJmAlbumInfo[];
 }
 
 /** 收藏夹操作类型 */
@@ -474,21 +505,17 @@ export class AlbumViewModel {
   likes: string = '0';
   category: string = '';
 
-  static fromApiInfo(info: JmAlbumInfo, coverUrl: string): AlbumViewModel {
+  static fromApiInfo(info: RespJmAlbumInfo, coverUrl: string): AlbumViewModel {
     let vm = new AlbumViewModel();
-    vm.id = typeof info.id === 'number' ? info.id : parseInt(info.id as string) || 0;
-    vm.name = info.name || '';
-    vm.description = info.description || '';
+    let jmAlbumInfo: JmAlbumInfo = respToJmAlbumInfo(info);
+    vm.id = jmAlbumInfo.id;
+    vm.name = jmAlbumInfo.name;
+    vm.description = jmAlbumInfo.description;
+    vm.author = jmAlbumInfo.author.length === 1 ? jmAlbumInfo.author[0] : jmAlbumInfo.author.join(', ')
+    vm.category = jmAlbumInfo.category;
     vm.totalViews = info.total_views || '0';
     vm.totalPicture = info.total_picture || '0';
     vm.likes = info.likes || '0';
-    // author 可能是字符串或数组
-    if (Array.isArray(info.author)) {
-      vm.author = (info.author as string[]).join(', ');
-    } else {
-      vm.author = (info.author as string) || '';
-    }
-    vm.category = typeof info.category === 'string' ? info.category : info.category?.title || '';
     vm.coverUrl = coverUrl;
     return vm;
   }

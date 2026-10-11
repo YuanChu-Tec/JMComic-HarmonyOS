@@ -8,6 +8,8 @@ import { AlbumViewModel, JmAlbumInfo, JmPromoteSection, SearchResultData, IAlbum
   COMMENT_MODE_ALL, COMMENT_MODE_MANHUA, COMMENT_MODE_CHAT, COMMENT_MODE_NAME_MAP,
   UserSession, FavoriteAlbumItem, FavoriteFolderItem, FavoritePageData, FavoriteFolderType,
   WatchListData,
+  RespJmAlbumInfo,
+  respToJmAlbumInfo,
 } from '../models/Album';
 import { CacheManager } from '../common/CacheManager';
 import {
@@ -23,6 +25,8 @@ import { MenuItem, buildMenuPopup, RouteColumn, buildRouteMenu, buildMenuOverlay
 import { CommentItemComponent } from '../common/CommentItem';
 import { DeviceUtils } from 'common';
 import { ThemeSetting } from '../common/ThemeSetting';
+import hilog from '@ohos.hilog';
+import { JmAlbumCard } from './JmAlbumCard';
 
 interface OrderItem {
   key: string;
@@ -33,6 +37,8 @@ interface ForumModeItem {
   key: string;
   label: string;
 }
+
+const TAG: string = 'Index';
 
 // ═══════════════════════════════════════════
 // 首页 — 推荐分区横向滑动
@@ -74,14 +80,6 @@ struct HomePage {
     } finally {
       this.isLoading = false;
     }
-  }
-
-  onAlbumClick(album: JmAlbumInfo): void {
-    let id = typeof album.id === 'number' ? album.id : parseInt(album.id as string) || 0;
-    router.pushUrl({
-      url: 'pages/AlbumDetailPage',
-      params: { albumId: id, albumName: album.name }
-    });
   }
 
   build() {
@@ -144,9 +142,9 @@ struct HomePage {
               Scroll() {
                 Row({ space: 10 }) {
                   ForEach(this.latestAlbums, (album: JmAlbumInfo) => {
-                    this.HomeAlbumCard(album)
-                  }, (album: JmAlbumInfo, index?: number) => {
-                    return `${typeof album.id === 'number' ? album.id : album.id}`
+                    JmAlbumCard({ isTablet: this.isTablet, cardInfo: album })
+                  }, (album: JmAlbumInfo) => {
+                    return `${album.id}`
                   })
                 }
                 .padding({ left: 16, right: 16 })
@@ -174,9 +172,9 @@ struct HomePage {
               Scroll() {
                 Row({ space: 10 }) {
                   ForEach(section.content, (album: JmAlbumInfo) => {
-                    this.HomeAlbumCard(album)
-                  }, (album: JmAlbumInfo, index?: number) => {
-                    return `${typeof album.id === 'number' ? album.id : album.id}`
+                    JmAlbumCard({isTablet: this.isTablet, cardInfo: album})
+                  }, (album: JmAlbumInfo) => {
+                    return `${album.id}`
                   })
                 }
                 .padding({ left: 16, right: 16 })
@@ -197,28 +195,6 @@ struct HomePage {
     .backgroundColor($r('app.color.bg_page'))
   }
 
-  @Builder
-  HomeAlbumCard(album: JmAlbumInfo) {
-    Column() {
-      Image(this.apiService.buildCoverUrl(album.id))
-        .width(this.isTablet ? 150 : 120)
-        .height(this.isTablet ? 200 : 160)
-        .objectFit(ImageFit.Cover)
-        .borderRadius(8)
-        .backgroundColor($r('app.color.bg_secondary'))
-
-      Text(album.name)
-        .fontSize(12)
-        .fontColor($r('app.color.text_primary'))
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .lineHeight(16)
-        .width(this.isTablet ? 150 : 120)
-        .margin({ top: 6 })
-    }
-    .alignItems(HorizontalAlign.Start)
-    .onClick(() => this.onAlbumClick(album))
-  }
 }
 
 // ═══════════════════════════════════════════
@@ -384,15 +360,8 @@ struct ProfilePage {
     try {
       let resp = await this.apiService.getWatchList(this.watchCurrentPage);
       if (resp.code === 200 && resp.data) {
-        let vms = resp.data.list.map((item: JmAlbumInfo) => {
-          let vm = new AlbumViewModel();
-          vm.id = typeof item.id === 'number' ? item.id : parseInt(item.id as string) || 0;
-          vm.name = item.name;
-          vm.author = Array.isArray(item.author) ? item.author.join(', ') : item.author;
-          vm.description = item.description || '';
-          vm.category = typeof item.category === 'object' ? (item.category?.title || '') : (item.category || '');
-          vm.coverUrl = this.apiService.buildCoverUrl(vm.id);
-          return vm;
+        let vms = resp.data.list.map((item: RespJmAlbumInfo) => {
+          return AlbumViewModel.fromApiInfo(item, '');
         });
         // 去重合并：历史记录同一漫画可能出现在多页
         let map = new Map<number, AlbumViewModel>();
