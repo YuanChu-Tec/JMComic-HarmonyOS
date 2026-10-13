@@ -3,7 +3,7 @@ import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { fileIo } from '@kit.CoreFileKit';
 import { ApiService } from '../network/ApiService';
-import { AlbumViewModel, JmAlbumInfo, JmPromoteSection, SearchResultData, IAlbumViewModelJSON,
+import { AlbumViewModel, JmPromoteSection, SearchResultData, IAlbumViewModelJSON,
   CommentInfo, CommentPageData, parseCommentRaw,
   COMMENT_MODE_ALL, COMMENT_MODE_MANHUA, COMMENT_MODE_CHAT, COMMENT_MODE_NAME_MAP,
   UserSession, FavoriteAlbumItem, FavoriteFolderItem, FavoritePageData, FavoriteFolderType,
@@ -25,7 +25,6 @@ import { MenuItem, buildMenuPopup, RouteColumn, buildRouteMenu, buildMenuOverlay
 import { CommentItemComponent } from '../common/CommentItem';
 import { DeviceUtils } from 'common';
 import { ThemeSetting } from '../common/ThemeSetting';
-import hilog from '@ohos.hilog';
 import { JmAlbumCard } from './JmAlbumCard';
 
 interface OrderItem {
@@ -38,15 +37,13 @@ interface ForumModeItem {
   label: string;
 }
 
-const TAG: string = 'Index';
-
 // ═══════════════════════════════════════════
 // 首页 — 推荐分区横向滑动
 // ═══════════════════════════════════════════
 @Component
 struct HomePage {
   @State sections: JmPromoteSection[] = [];
-  @State latestAlbums: JmAlbumInfo[] = [];
+  @State latestAlbums: RespJmAlbumInfo[] = [];
   @State isLoading: boolean = true;
   @State loadFailed: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
@@ -72,7 +69,7 @@ struct HomePage {
         this.sections = promoteResp.data as JmPromoteSection[];
       }
       if (latestResp.code === 200 && latestResp.data) {
-        this.latestAlbums = latestResp.data as JmAlbumInfo[];
+        this.latestAlbums = latestResp.data as RespJmAlbumInfo[];
       }
     } catch (err) {
       console.error('[HomePage] load error:', JSON.stringify(err));
@@ -141,9 +138,9 @@ struct HomePage {
 
               Scroll() {
                 Row({ space: 10 }) {
-                  ForEach(this.latestAlbums, (album: JmAlbumInfo) => {
-                    JmAlbumCard({ isTablet: this.isTablet, cardInfo: album })
-                  }, (album: JmAlbumInfo) => {
+                  ForEach(this.latestAlbums, (album: RespJmAlbumInfo) => {
+                    JmAlbumCard({ isTablet: this.isTablet, cardInfo: respToJmAlbumInfo(album) })
+                  }, (album: RespJmAlbumInfo) => {
                     return `${album.id}`
                   })
                 }
@@ -171,9 +168,9 @@ struct HomePage {
               // 横向滑动列表
               Scroll() {
                 Row({ space: 10 }) {
-                  ForEach(section.content, (album: JmAlbumInfo) => {
-                    JmAlbumCard({isTablet: this.isTablet, cardInfo: album})
-                  }, (album: JmAlbumInfo) => {
+                  ForEach(section.content, (album: RespJmAlbumInfo) => {
+                    JmAlbumCard({isTablet: this.isTablet, cardInfo: respToJmAlbumInfo(album)})
+                  }, (album: RespJmAlbumInfo) => {
                     return `${album.id}`
                   })
                 }
@@ -361,7 +358,9 @@ struct ProfilePage {
       let resp = await this.apiService.getWatchList(this.watchCurrentPage);
       if (resp.code === 200 && resp.data) {
         let vms = resp.data.list.map((item: RespJmAlbumInfo) => {
-          return AlbumViewModel.fromApiInfo(item, '');
+          let vm = AlbumViewModel.fromApiInfo(item, '');
+          vm.coverUrl = this.apiService.buildCoverUrl(vm.id);
+          return vm;
         });
         // 去重合并：历史记录同一漫画可能出现在多页
         let map = new Map<number, AlbumViewModel>();

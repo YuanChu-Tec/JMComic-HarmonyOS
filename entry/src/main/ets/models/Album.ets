@@ -72,12 +72,12 @@ export interface JmAlbumInfo {
 
 export function respToJmAlbumInfo(info: RespJmAlbumInfo):JmAlbumInfo {
 	return {
-    id: (typeof info.id === 'number' ? (info.id as number) : Number(info.id)) ?? 0,
+    id: Number(info.id) || 0,
     name: info.name,
     author: (typeof info.author === 'string' ? [info.author as string] : (info.author as string[])) ?? [],
     image: info.image,
     description: info.description,
-    category: (typeof info.category === 'string' ? (info.category as string) : info.category.title) ?? '',
+    category: (typeof info.category === 'string' ? info.category : (info.category ? info.category.title : '')) ?? '',
     total_views: info.total_views,
     total_picture: info.total_picture,
     likes: info.likes,

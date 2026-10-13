@@ -30,7 +30,6 @@ import {
   JmApiResponse,
   JmAlbumDetail,
   JmPromoteSection,
-  JmAlbumInfo,
   SearchResultData,
   AlbumDetailData,
   PictureData,
