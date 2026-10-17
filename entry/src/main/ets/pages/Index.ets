@@ -6,8 +6,7 @@ import { ApiService } from '../network/ApiService';
 import { AlbumViewModel, JmPromoteSection, SearchResultData, IAlbumViewModelJSON,
   CommentInfo, CommentPageData, parseCommentRaw,
   COMMENT_MODE_ALL, COMMENT_MODE_MANHUA, COMMENT_MODE_CHAT, COMMENT_MODE_NAME_MAP,
-  UserSession, FavoriteAlbumItem, FavoriteFolderItem, FavoritePageData, FavoriteFolderType,
-  WatchListData,
+  FavoriteAlbumItem, FavoriteFolderItem,
   RespJmAlbumInfo,
   respToJmAlbumInfo,
 } from '../models/Album';
@@ -21,7 +20,7 @@ import {
   ORDER_NAME_MAP, PAGE_SIZE_FAVORITE,
 } from '../common/Constants';
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
-import { MenuItem, buildMenuPopup, RouteColumn, buildRouteMenu, buildMenuOverlay } from '../common/MenuPopup';
+import { RouteColumn, buildRouteMenu, buildMenuOverlay } from '../common/MenuPopup';
 import { CommentItemComponent } from '../common/CommentItem';
 import { DeviceUtils } from 'common';
 import { ThemeSetting } from '../common/ThemeSetting';
@@ -79,6 +78,27 @@ struct HomePage {
     }
   }
 
+  onSectionMore(title: string, albums: RespJmAlbumInfo[]): void {
+    router.pushUrl({
+      url: 'pages/SectionMorePage',
+      params: { sectionTitle: title, initialAlbums: albums }
+    });
+  }
+
+  @Builder
+  SectionMoreEntry(title: string, albums: RespJmAlbumInfo[]) {
+    Row({ space: 2 }) {
+      Text('更多')
+        .fontSize(13)
+        .fontColor($r('app.color.text_tertiary'))
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(14)
+        .fontColor([$r('app.color.text_tertiary')])
+    }
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => this.onSectionMore(title, albums))
+  }
+
   build() {
     Scroll() {
       Column() {
@@ -132,6 +152,9 @@ struct HomePage {
                   .fontSize(17)
                   .fontWeight(FontWeight.Bold)
                   .fontColor($r('app.color.text_primary'))
+                  .layoutWeight(1)
+
+                this.SectionMoreEntry('最新上传', this.latestAlbums)
               }
               .width('100%')
               .padding({ left: 16, right: 16, top: 16, bottom: 10 })
@@ -161,6 +184,9 @@ struct HomePage {
                   .fontSize(17)
                   .fontWeight(FontWeight.Bold)
                   .fontColor($r('app.color.text_primary'))
+                  .layoutWeight(1)
+
+                this.SectionMoreEntry('最新上传', this.latestAlbums)
               }
               .width('100%')
               .padding({ left: 16, right: 16, top: 16, bottom: 10 })
@@ -275,10 +301,8 @@ struct ProfilePage {
     try {
       let context = getContext() as common.UIAbilityContext;
       let dirs = [context.cacheDir, context.filesDir];
-      let count = 0;
       for (let dir of dirs) {
         this.deleteDirRecursive(dir);
-        count++;
       }
       try { promptAction.showToast({ message: '缓存已清理', duration: 2000 }); } catch (_e) {}
     } catch (e) {
