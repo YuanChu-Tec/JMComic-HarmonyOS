@@ -18,6 +18,7 @@ import {
   CATEGORY_NAME_MAP, ORDER_BY_LATEST, ORDER_MONTH_RANKING,
   ORDER_WEEK_RANKING, ORDER_DAY_RANKING, ORDER_BY_LIKE,
   ORDER_NAME_MAP, PAGE_SIZE_FAVORITE,
+  SECTION_SOURCE_LATEST, SECTION_SOURCE_PROMOTE,
 } from '../common/Constants';
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { RouteColumn, buildRouteMenu, buildMenuOverlay } from '../common/MenuPopup';
@@ -78,15 +79,15 @@ struct HomePage {
     }
   }
 
-  onSectionMore(title: string, albums: RespJmAlbumInfo[]): void {
+  onSectionMore(title: string, albums: RespJmAlbumInfo[], source: string): void {
     router.pushUrl({
       url: 'pages/SectionMorePage',
-      params: { sectionTitle: title, initialAlbums: albums }
+      params: { sectionTitle: title, initialAlbums: albums, source: source }
     });
   }
 
   @Builder
-  SectionMoreEntry(title: string, albums: RespJmAlbumInfo[]) {
+  SectionMoreEntry(title: string, albums: RespJmAlbumInfo[], source: string) {
     Row({ space: 2 }) {
       Text('更多')
         .fontSize(13)
@@ -96,7 +97,7 @@ struct HomePage {
         .fontColor([$r('app.color.text_tertiary')])
     }
     .alignItems(VerticalAlign.Center)
-    .onClick(() => this.onSectionMore(title, albums))
+    .onClick(() => this.onSectionMore(title, albums, source))
   }
 
   build() {
@@ -154,7 +155,7 @@ struct HomePage {
                   .fontColor($r('app.color.text_primary'))
                   .layoutWeight(1)
 
-                this.SectionMoreEntry('最新上传', this.latestAlbums)
+                this.SectionMoreEntry('最新上传', this.latestAlbums, SECTION_SOURCE_LATEST)
               }
               .width('100%')
               .padding({ left: 16, right: 16, top: 16, bottom: 10 })
@@ -186,7 +187,9 @@ struct HomePage {
                   .fontColor($r('app.color.text_primary'))
                   .layoutWeight(1)
 
-                this.SectionMoreEntry('最新上传', this.latestAlbums)
+                // 传入当前推广分区自身的标题与数据，不能用「最新上传」，
+                // 否则所有分区的更多页都会展示最新上传数据并走错分页接口
+                this.SectionMoreEntry(section.title, section.content, SECTION_SOURCE_PROMOTE)
               }
               .width('100%')
               .padding({ left: 16, right: 16, top: 16, bottom: 10 })

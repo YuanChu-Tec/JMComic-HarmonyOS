@@ -3,6 +3,11 @@
  * 对应 Python 项目中的 JmMagicConstants 和 JmModuleConfig
  */
 
+// 分区「更多」页的数据来源标识
+// 显式区分走哪个分页接口，避免依赖分区标题文案判断（文案一改就失效）
+export const SECTION_SOURCE_LATEST: string = 'latest';
+export const SECTION_SOURCE_PROMOTE: string = 'promote';
+
 // API 域名列表 (与 JMComic-qt Url2List 保持一致)
 export const DOMAIN_API_LIST: string[] = [
   'www.cdnhth.club',

@@ -6,16 +6,15 @@ import {
   JmPromoteSection,
 } from '../models/Album';
 import { JmAlbumCard } from './JmAlbumCard';
+import { SECTION_SOURCE_LATEST, SECTION_SOURCE_PROMOTE } from '../common/Constants';
 
 const MORE_TAG: string = 'SectionMore';
-
-// 数据来源：最新上传 / 推荐分区
-const SECTION_SOURCE_LATEST: string = 'latest';
-const SECTION_SOURCE_PROMOTE: string = 'promote';
 
 interface SectionMorePageParams {
   sectionTitle: string;
   initialAlbums: RespJmAlbumInfo[];
+  // 数据来源：latest / promote，由首页显式传入，避免依赖标题文案
+  source?: string;
 }
 
 /**
@@ -30,9 +29,12 @@ struct SectionMorePage {
   @State isLoading: boolean = false;
   @State loadFailed: boolean = false;
   @State hasMore: boolean = true;
+  // 首屏内容高度 / Scroll 可视高度，用于判断是否需要主动续加载
+  @State contentHeight: number = 0;
+  @State viewportHeight: number = 0;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   private currentPage: number = 1;
-  private source: string = SECTION_SOURCE_PROMOTE;
+  private source: string = '';
   private apiService: ApiService = ApiService.getInstance();
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
   @State showBackTop: boolean = false;
@@ -46,11 +48,20 @@ struct SectionMorePage {
         this.sectionTitle = params.sectionTitle;
       }
       if (params.initialAlbums && params.initialAlbums.length > 0) {
-        // 直接使用首页已加载的分区数据，无需重新请求
-        this.albums = params.initialAlbums.map((item: RespJmAlbumInfo) => respToJmAlbumInfo(item));
+        // 直接使用首页已加载的分区数据，无需重新请求；
+        // 首屏同样要按 id 去重：ForEach 以 id 为 key，重复 id 会导致渲染异常
+        let mapped = params.initialAlbums.map((item: RespJmAlbumInfo) => respToJmAlbumInfo(item));
+        this.albums = this.dedupeAlbums(mapped);
+      }
+      // 优先使用首页显式传入的来源
+      if (params.source) {
+        this.source = params.source;
       }
     }
-    this.source = this.sectionTitle === '最新上传' ? SECTION_SOURCE_LATEST : SECTION_SOURCE_PROMOTE;
+    if (!this.source) {
+      // 兼容旧调用：未传 source 时按标题兜底推断
+      this.source = this.sectionTitle === '最新上传' ? SECTION_SOURCE_LATEST : SECTION_SOURCE_PROMOTE;
+    }
     // 首页数据对应第 0 页，后续从第 1 页继续加载
     this.currentPage = 1;
     // 无传入数据时（异常进入）从第 0 页拉取兜底
@@ -58,6 +69,24 @@ struct SectionMorePage {
       this.currentPage = 0;
       this.loadAlbums();
     }
+  }
+
+  /**
+   * 首屏数据去重
+   * - 丢弃 id 无效（<=0）的条目：这类条目无法打开详情，且会让 ForEach 的 id key 重复
+   * - 同一 id 只保留首个，避免 ForEach key 冲突
+   */
+  private dedupeAlbums(list: JmAlbumInfo[]): JmAlbumInfo[] {
+    let result: JmAlbumInfo[] = [];
+    let seen = new Set<number>();
+    for (let item of list) {
+      if (item.id <= 0 || seen.has(item.id)) {
+        continue;
+      }
+      seen.add(item.id);
+      result.push(item);
+    }
+    return result;
   }
 
   async loadAlbums(): Promise<void> {
@@ -101,7 +130,10 @@ struct SectionMorePage {
           }
           let before = map.size;
           for (let album of newItems) {
-            map.set(album.id, album);
+            // 跳过无效 id，避免 ForEach key 变成 0；若整页都无效，下面会判定为没有更多
+            if (album.id > 0) {
+              map.set(album.id, album);
+            }
           }
           if (map.size > before) {
             this.albums = Array.from(map.values());
@@ -127,6 +159,22 @@ struct SectionMorePage {
     hilog.info(0, MORE_TAG, `loadMore triggered: isLoading=${this.isLoading} hasMore=${this.hasMore} loadFailed=${this.loadFailed} currentPage=${this.currentPage} albums=${this.albums.length}`);
     if (this.isLoading || !this.hasMore || this.loadFailed) return;
     this.loadAlbums();
+  }
+
+  /**
+   * 首屏内容不足一屏时，Scroll 的 onReachEnd 不会触发，导致无法续加载。
+   * 布局完成后比较「内容高度」与「可视高度」，不足一屏就主动加载下一页；
+   * 加载后内容变高会再次触发，直到填满一屏或没有更多。
+   */
+  private tryAutoLoad(): void {
+    if (this.contentHeight <= 0 || this.viewportHeight <= 0) return;
+    if (this.isLoading || !this.hasMore || this.loadFailed) return;
+    // Scroll 的上下 padding 不参与内容区，计算可视高度时需要扣除
+    let visible = this.viewportHeight - this.topSafeHeight - 76;
+    // 留 2vp 容差，避免浮点误差导致反复触发
+    if (visible > 0 && this.contentHeight <= visible + 2) {
+      this.loadAlbums();
+    }
   }
 
   onBack(): void {
@@ -187,13 +235,18 @@ struct SectionMorePage {
         } else {
           Scroll(this.scroller) {
             Column() {
-              // 卡片流式铺排：不固定每行个数，按卡片宽度自动换行，每行水平居中
-              Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Center }) {
+              // 参考 SearchPage：Grid 按屏宽分列（手机 2 列 / 平板 4 列），
+              // 卡片宽度由 1fr 自动均分，避免固定宽度造成两侧留白
+              Grid() {
                 ForEach(this.albums, (album: JmAlbumInfo) => {
-                  JmAlbumCard({ isTablet: this.isTablet, cardInfo: album })
-                    .margin({ left: 6, right: 6, bottom: 14 })
+                  GridItem() {
+                    JmAlbumCard({ isTablet: this.isTablet, cardInfo: album, fillWidth: true })
+                  }
                 }, (album: JmAlbumInfo) => `${album.id}`)
               }
+              .columnsTemplate(this.isTablet ? '1fr 1fr 1fr 1fr' : '1fr 1fr')
+              .columnsGap(12)
+              .rowsGap(14)
               .width('100%')
               .padding({ left: 10, right: 10, top: 10, bottom: 6 })
 
@@ -235,11 +288,19 @@ struct SectionMorePage {
               }
             }
             .width('100%')
+            .onAreaChange((_oldArea: Area, newArea: Area) => {
+              this.contentHeight = Number(newArea.height);
+              this.tryAutoLoad();
+            })
           }
           .width('100%')
           .height('100%')
           .scrollBar(BarState.Off)
           .padding({ top: this.topSafeHeight + 56, bottom: 20 })
+          .onAreaChange((_oldArea: Area, newArea: Area) => {
+            this.viewportHeight = Number(newArea.height);
+            this.tryAutoLoad();
+          })
           .onReachEnd(() => this.loadMore())
           .onDidScroll(() => {
             if (this.isBackTopScrolling) return;
