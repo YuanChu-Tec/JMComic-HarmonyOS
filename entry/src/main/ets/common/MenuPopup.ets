@@ -25,7 +25,8 @@ export interface MenuPosition {
 @Builder
 export function buildExpandedMenu(
   menuItems: MenuItem[],
-  position: MenuPosition = { x: '100%', y: 56 },
+  // 默认定位于状态栏下方 +48（mini 标题栏高度）；勿改回固定 56——沉浸式下会顶进状态栏
+  position: MenuPosition = { x: '100%', y: (AppStorage.get<number>('topSafeHeight') ?? 0) + 48 },
   onDismiss?: () => void
 ) {
   Column() {
@@ -109,7 +110,8 @@ export interface RouteColumn {
 @Builder
 export function buildRouteMenu(
   columns: RouteColumn[],
-  position: MenuPosition = { x: '100%', y: 56 },
+  // 默认定位于状态栏下方 +48（mini 标题栏高度）；勿改回固定 56——沉浸式下会顶进状态栏
+  position: MenuPosition = { x: '100%', y: (AppStorage.get<number>('topSafeHeight') ?? 0) + 48 },
   onDismiss: () => void
 ) {
   Column() {
@@ -221,7 +223,8 @@ export function buildRouteMenu(
 @Builder
 export function buildMenuPopup(
   menuItems: MenuItem[],
-  position: MenuPosition = { x: '100%', y: 56 },
+  // 默认定位于状态栏下方 +48（mini 标题栏高度）；勿改回固定 56——沉浸式下会顶进状态栏
+  position: MenuPosition = { x: '100%', y: (AppStorage.get<number>('topSafeHeight') ?? 0) + 48 },
   onDismiss: () => void
 ) {
   Stack() {

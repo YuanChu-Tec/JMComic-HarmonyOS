@@ -173,11 +173,11 @@ struct LoginPage {
           .onChange((value: string) => this.password = value)
           .margin({ top: 12 })
 
-        // 记住密码
+        // 记住密码（整行可点：点击行内任意处切换开关；Toggle 仅作状态展示，
+        // 不单独挂 onChange，避免点击开关时事件冒泡与行点击双通道互相抵消）
         Row() {
           Toggle({ type: ToggleType.Switch, isOn: this.savePassword })
             .selectedColor($r('app.color.brand'))
-            .onChange((checked: boolean) => this.savePassword = checked)
 
           Text('记住密码')
             .fontSize(13)
@@ -187,6 +187,8 @@ struct LoginPage {
         .width('85%')
         .margin({ top: 12 })
         .justifyContent(FlexAlign.Start)
+        .padding({ top: 8, bottom: 8 })
+        .onClick(() => this.savePassword = !this.savePassword)
 
         // 错误消息
         if (this.errorMsg) {
