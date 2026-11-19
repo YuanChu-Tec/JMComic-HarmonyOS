@@ -277,7 +277,7 @@ struct AlbumCommentPage {
             .onClick(() => this.onSendComment())
         }
         .width('100%')
-        .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 8 })
+        .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 28 })
         .backgroundColor($r('app.color.bg_card'))
         .border({ width: { top: 0.5 }, color: $r('app.color.divider') })
       }
@@ -287,10 +287,15 @@ struct AlbumCommentPage {
 
       // ── 顶部导航栏 ──
       Row() {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(24)
-          .fontColor([$r('app.color.text_primary')])
-          .onClick(() => this.onBack())
+        // 返回：40×40 标准点击体（裸 SymbolGlyph 字形宽仅约 13vp，不达 24vp 规范）
+        Stack() {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(24)
+            .fontColor([$r('app.color.text_primary')])
+        }
+        .width(40)
+        .height(40)
+        .onClick(() => this.onBack())
 
         Column() {
           Text(this.albumName)

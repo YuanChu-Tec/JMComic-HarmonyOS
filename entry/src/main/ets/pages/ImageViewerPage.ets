@@ -817,10 +817,15 @@ struct ImageViewerPage {
         // ── 悬浮顶部工具栏 ──
         if (this.showControls) {
           Row() {
-            SymbolGlyph($r('sys.symbol.chevron_left'))
-              .fontSize(24)
-              .fontColor(['#FFFFFF'])
-              .onClick(() => this.onBack())
+            // 返回：40×40 标准点击体（裸 SymbolGlyph 字形宽仅约 13vp，不达 24vp 规范）
+            Stack() {
+              SymbolGlyph($r('sys.symbol.chevron_left'))
+                .fontSize(24)
+                .fontColor(['#FFFFFF'])
+            }
+            .width(40)
+            .height(40)
+            .onClick(() => this.onBack())
 
             Text(`第${this.currentChapterIndex + 1}章 - ${this.titleText}`)
               .fontSize(16)
@@ -883,7 +888,7 @@ struct ImageViewerPage {
               .onClick(() => this.goNextChapter())
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 8 })
+          .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 28 })
           .backgroundColor('rgba(0,0,0,0.5)')
           .backdropBlur(20)
           .justifyContent(FlexAlign.SpaceBetween)

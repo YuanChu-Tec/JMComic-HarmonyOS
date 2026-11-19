@@ -28,6 +28,7 @@ struct SectionMorePage {
   @State contentHeight: number = 0;
   @State viewportHeight: number = 0;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
+  @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private currentPage: number = 1;
   private source: string = '';
   private apiService: ApiService = ApiService.getInstance();
@@ -293,7 +294,7 @@ struct SectionMorePage {
           .width('100%')
           .height('100%')
           .scrollBar(BarState.Off)
-          .padding({ top: this.topSafeHeight + 56, bottom: 20 })
+          .padding({ top: this.topSafeHeight + 56, bottom: this.bottomSafeHeight + 12 })
           .onAreaChange((_oldArea: Area, newArea: Area) => {
             this.viewportHeight = Number(newArea.height);
             this.tryAutoLoad();
@@ -356,7 +357,7 @@ struct SectionMorePage {
         .backgroundColor($r('app.color.overlay_bg'))
         .backdropBlur(20)
         .shadow({ radius: 8, color: '#1A000000', offsetX: 0, offsetY: 2 })
-        .position({ right: 20, bottom: 48 })
+        .position({ right: 20, bottom: this.bottomSafeHeight + 28 })
         .zIndex(9)
         .onClick(() => this.onBackTop())
       }

@@ -286,7 +286,7 @@ struct SearchPage {
           .width('100%')
           .height('100%')
           .justifyContent(FlexAlign.Start)
-          .padding({ top: this.topSafeHeight + 56 })
+          .padding({ top: this.topSafeHeight + 56, bottom: this.bottomSafeHeight + 16 })
         } else {
           Scroll() {
             Column() {
@@ -346,7 +346,7 @@ struct SearchPage {
           .width('100%')
           .height('100%')
           .scrollBar(BarState.Off)
-          .padding({ top: this.topSafeHeight + 56 })
+          .padding({ top: this.topSafeHeight + 56, bottom: this.bottomSafeHeight + 16 })
           .onReachEnd(() => this.loadMore())
         }
       }
@@ -356,10 +356,15 @@ struct SearchPage {
 
       // ── 搜索栏（浮层 + 毛玻璃） ──
       Row() {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(24)
-          .fontColor([$r('app.color.text_primary')])
-          .onClick(() => this.onBack())
+        // 返回：40×40 标准点击体（裸 SymbolGlyph 字形宽仅约 13vp，不达 24vp 规范）
+        Stack() {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(24)
+            .fontColor([$r('app.color.text_primary')])
+        }
+        .width(40)
+        .height(40)
+        .onClick(() => this.onBack())
 
         Stack({ alignContent: Alignment.End }) {
           TextInput({ placeholder: '输入关键词搜索...', text: this.keyword })

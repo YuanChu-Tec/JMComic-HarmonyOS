@@ -907,8 +907,8 @@ struct AlbumDetailPage {
               .width('100%')
             }
 
-            // 底部占位
-            Column().height(20)
+            // 底部占位：避让导航条区域，防止最后一项被手势指示条遮挡
+            Column().height(this.bottomSafeHeight + 24)
           }
           .width('100%')
         }
@@ -937,22 +937,27 @@ struct AlbumDetailPage {
 
       // ── 沉浸式顶部导航栏（毛玻璃浮层） ──
       Row() {
-        // 左：返回按钮（responseRegion 扩大热区：裸 SymbolGlyph 字形仅约 13~24vp 宽，不达 24vp 规范，
-        // 统一采用 SectionMorePage.ets 的 48×48 热区范式；上/左越界部分落在顶栏自身留白内）
-        SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(24)
-          .fontColor([$r('app.color.text_primary')])
-          .responseRegion({ x: -12, y: -12, width: 48, height: 48 })
-          .onClick(() => this.onBack())
+        // 左：返回按钮（40×40 标准点击体：裸 SymbolGlyph 字形有效宽度仅约 13~24vp，不达 24vp 规范）
+        Stack() {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(24)
+            .fontColor([$r('app.color.text_primary')])
+        }
+        .width(40)
+        .height(40)
+        .onClick(() => this.onBack())
 
         Blank()
 
-        // 右：分享（同左，48×48 热区）
-        SymbolGlyph($r('sys.symbol.share'))
-          .fontSize(24)
-          .fontColor([$r('app.color.text_primary')])
-          .responseRegion({ x: -12, y: -12, width: 48, height: 48 })
-          .onClick(() => this.onShare())
+        // 右：分享（同左，40×40 点击体）
+        Stack() {
+          SymbolGlyph($r('sys.symbol.share'))
+            .fontSize(24)
+            .fontColor([$r('app.color.text_primary')])
+        }
+        .width(40)
+        .height(40)
+        .onClick(() => this.onShare())
       }
       .position({ x: 0, y: 0 })
       .width('100%')

@@ -116,7 +116,7 @@ struct DownloadPage {
           .fontColor($r('app.color.text_tertiary'))
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: this.topSafeHeight + 8, bottom: 4 })
+      .padding({ left: 16, right: 16, top: 8, bottom: 4 })
       .backgroundColor($r('app.color.bg_card'))
 
       // ── 下载列表 ──
@@ -144,6 +144,7 @@ struct DownloadPage {
         .width('100%')
         .layoutWeight(1)
         .scrollBar(BarState.Off)
+        .padding({ bottom: this.bottomSafeHeight + 20 })
       }
     }
     .width('100%')
