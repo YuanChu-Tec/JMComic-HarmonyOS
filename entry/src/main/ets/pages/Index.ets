@@ -1590,6 +1590,12 @@ struct Index {
           // 固定 28vp：HdsTabs 悬浮栏自身已含导航条避让，barBottomMargin 不叠加 bottomSafeHeight
           //（叠加会双重抬高，真机实测约定 2026-11-19）
           barBottomMargin: 28,
+          // 底部渐变半透明遮罩（HdsTabs 自带 gradientMask）：不配置时默认高度仅 TabBar 高+32vp 偏矮，
+          // 显式加高到 140；maskColor 复用主题雾色 overlay_bg（浅色白雾/深色深灰），自动跟随深浅色
+          gradientMask: {
+            maskColor: $r('app.color.overlay_bg'),
+            maskHeight: 140
+          },
           systemMaterialEffect: DeviceUtils.isEmulator() ? undefined : {
             materialType: hdsMaterial.MaterialType.IMMERSIVE,
             materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
