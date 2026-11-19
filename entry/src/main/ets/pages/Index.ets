@@ -1587,7 +1587,9 @@ struct Index {
         .barPosition(BarPosition.End)
         .barOverlap(true)
         .barFloatingStyle({
-          barBottomMargin: this.bottomSafeHeight + 28,
+          // 固定 28vp：HdsTabs 悬浮栏自身已含导航条避让，barBottomMargin 不叠加 bottomSafeHeight
+          //（叠加会双重抬高，真机实测约定 2026-11-19）
+          barBottomMargin: 28,
           systemMaterialEffect: DeviceUtils.isEmulator() ? undefined : {
             materialType: hdsMaterial.MaterialType.IMMERSIVE,
             materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
