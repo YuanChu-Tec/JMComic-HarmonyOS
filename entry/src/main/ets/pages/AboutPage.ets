@@ -69,6 +69,7 @@ struct AboutPage {
                 .fontSize(14)
                 .fontColor($r('app.color.brand'))
                 .layoutWeight(1)
+                .padding({ top: 10, bottom: 10 })
                 .decoration({ type: TextDecorationType.Underline, color: $r('app.color.brand') })
                 .onClick(() => this.openUrl('https://18comic.vip'))
 
@@ -94,6 +95,7 @@ struct AboutPage {
                 .fontSize(14)
                 .fontColor($r('app.color.brand'))
                 .layoutWeight(1)
+                .padding({ top: 10, bottom: 10 })
                 .decoration({ type: TextDecorationType.Underline, color: $r('app.color.brand') })
                 .onClick(() => this.openUrl('https://18comic.org'))
 
@@ -119,6 +121,7 @@ struct AboutPage {
                 .fontSize(14)
                 .fontColor($r('app.color.brand'))
                 .layoutWeight(1)
+                .padding({ top: 10, bottom: 10 })
                 .decoration({ type: TextDecorationType.Underline, color: $r('app.color.brand') })
                 .onClick(() => this.openUrl('https://t.me/JM_comic'))
 
@@ -158,6 +161,7 @@ struct AboutPage {
                 .fontSize(14)
                 .fontColor($r('app.color.brand'))
                 .layoutWeight(1)
+                .padding({ top: 10, bottom: 10 })
                 .decoration({ type: TextDecorationType.Underline, color: $r('app.color.brand') })
                 .onClick(() => this.openUrl('https://github.com/YuanChu-Tec/JMComic-HarmonyOS'))
 
@@ -206,6 +210,7 @@ struct AboutPage {
                 .fontSize(14)
                 .fontColor($r('app.color.brand'))
                 .layoutWeight(1)
+                .padding({ top: 10, bottom: 10 })
                 .decoration({ type: TextDecorationType.Underline, color: $r('app.color.brand') })
                 .onClick(() => this.openUrl('https://t.me/HMTGchat'))
 
@@ -265,6 +270,7 @@ struct AboutPage {
                   .fontSize(14)
                   .fontColor($r('app.color.brand'))
                   .layoutWeight(1)
+                  .padding({ top: 10, bottom: 10 })
                   .onClick(() => this.loadVersions())
               } else {
                 Text(this.latestVersion || '未知')
@@ -281,6 +287,7 @@ struct AboutPage {
                 Text('发现新版本，点击前往下载')
                   .fontSize(14)
                   .fontColor($r('app.color.brand'))
+                  .padding({ top: 10, bottom: 10 })
                   .decoration({ type: TextDecorationType.Underline, color: $r('app.color.brand') })
                   .onClick(() => this.openUrl(RELEASES_PAGE_URL))
               }

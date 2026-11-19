@@ -258,11 +258,14 @@ export struct CommentItemComponent {
           .padding({ left: 14, right: 14 })
           .onChange((value: string) => { this.replyText = value; })
 
-        Text('发送')
-          .fontSize(13)
-          .fontColor($r('app.color.brand'))
-          .padding({ left: 10, right: 4 })
-          .onClick(() => this.doSendReply())
+        Stack() {
+          Text('发送')
+            .fontSize(13)
+            .fontColor($r('app.color.brand'))
+        }
+        .width(40)
+        .height(40)
+        .onClick(() => this.doSendReply())
       }
       .width('100%')
       .padding({ top: 8 })

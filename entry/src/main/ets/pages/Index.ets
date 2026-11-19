@@ -1,4 +1,4 @@
-import { display, promptAction } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { fileIo } from '@kit.CoreFileKit';
@@ -97,6 +97,7 @@ struct HomePage {
         .fontColor([$r('app.color.text_tertiary')])
     }
     .alignItems(VerticalAlign.Center)
+    .padding({ left: 8, right: 8, top: 8, bottom: 8 })
     .onClick(() => this.onSectionMore(title, albums, source))
   }
 
@@ -307,10 +308,11 @@ struct ProfilePage {
       for (let dir of dirs) {
         this.deleteDirRecursive(dir);
       }
-      try { promptAction.showToast({ message: '缓存已清理', duration: 2000 }); } catch (_e) {}
+      // Toast 统一走 UIContext 形态（开发规范 §5.5，禁模块级 promptAction 直呼）
+      this.getUIContext().getPromptAction().showToast({ message: '缓存已清理', duration: 2000 });
     } catch (e) {
       console.error('[Index] clear cache error:', JSON.stringify(e));
-      try { promptAction.showToast({ message: '清理失败', duration: 2000 }); } catch (_e) {}
+      this.getUIContext().getPromptAction().showToast({ message: '清理失败', duration: 2000 });
     }
   }
 
@@ -1462,7 +1464,7 @@ struct ForumPage {
   async handleSendReply(commentId: string, albumId: string, text: string): Promise<void> {
     if (!this.apiService.isLoggedIn()) {
       try {
-        await promptAction.showToast({ message: '请先登录后再回复', duration: 2000 });
+        this.getUIContext().getPromptAction().showToast({ message: '请先登录后再回复', duration: 2000 });
       } catch (e) {
         console.error('[ForumPage] showToast error:', JSON.stringify(e));
       }

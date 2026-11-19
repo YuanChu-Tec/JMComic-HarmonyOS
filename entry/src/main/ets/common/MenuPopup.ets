@@ -135,7 +135,7 @@ export function buildRouteMenu(
                 }
               }
               .width('100%')
-              .padding({ top: 4, bottom: 2 })
+              .padding({ top: 8, bottom: 8 })
               .onClick(() => {
                 col.onSelect?.(-1);
                 onDismiss();
@@ -158,7 +158,7 @@ export function buildRouteMenu(
                   }
                 }
                 .width('100%')
-                .padding({ top: 4, bottom: 2 })
+                .padding({ top: 8, bottom: 8 })
                 .onClick(() => {
                   col.onSelect?.(routeIndex);
                   onDismiss();

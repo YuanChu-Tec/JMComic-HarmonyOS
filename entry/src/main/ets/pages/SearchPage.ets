@@ -1,4 +1,4 @@
-import { display, promptAction } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
 import { ApiService } from '../network/ApiService';
 import { AlbumViewModel, JmAlbumInfo, IAlbumViewModelJSON } from '../models/Album';
 import { CacheManager } from '../common/CacheManager';
@@ -127,11 +127,8 @@ struct SearchPage {
   }
 
   private showToast(message: string): void {
-    try {
-      promptAction.showToast({ message: message, duration: 2000 });
-    } catch (e) {
-      console.error('[SearchPage] showToast error: ' + JSON.stringify(e));
-    }
+    // Toast 统一走 UIContext 形态（开发规范 §5.5，禁模块级 promptAction 直呼）
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: 2000 });
   }
 
   loadMore(): void {
@@ -244,6 +241,7 @@ struct SearchPage {
                   Text('清空')
                     .fontSize(13)
                     .fontColor($r('app.color.text_tertiary'))
+                    .padding({ left: 8, right: 8, top: 10, bottom: 10 })
                     .onClick(() => {
                       if (this.cache) {
                         this.cache.clearSearchHistory();
@@ -382,12 +380,16 @@ struct SearchPage {
             })
 
           if (this.keyword.trim().length > 0) {
-            // 推荐写法：使用 SymbolGlyph
-            SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
-              .fontSize(18)                 // 对应之前的 .width() .height()
-              .fontColor([$r('app.color.text_disabled')])       // 注意：fontColor 接收数组
-              .margin({ right: 13 })
-              .onClick(() => {
+            // 推荐写法：使用 SymbolGlyph（外套 40×40 标准点击体）
+            Stack() {
+              SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
+                .fontSize(18)                 // 对应之前的 .width() .height()
+                .fontColor([$r('app.color.text_disabled')])       // 注意：fontColor 接收数组
+            }
+            .width(40)
+            .height(40)
+            .margin({ right: 4 })
+            .onClick(() => {
                 this.keyword = '';
               })
           }
@@ -395,11 +397,15 @@ struct SearchPage {
         .layoutWeight(1)
         .margin({ left: 12, right: 12 })
 
-        Text('搜索')
-          .fontSize(15)
-          .fontColor($r('app.color.brand'))
-          .fontWeight(FontWeight.Medium)
-          .onClick(() => this.doSearch())
+        Stack() {
+          Text('搜索')
+            .fontSize(15)
+            .fontColor($r('app.color.brand'))
+            .fontWeight(FontWeight.Medium)
+        }
+        .width(40)
+        .height(40)
+        .onClick(() => this.doSearch())
       }
       .position({ x: 0, y: 0 })
       .width('100%')

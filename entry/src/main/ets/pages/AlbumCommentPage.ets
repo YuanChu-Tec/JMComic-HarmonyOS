@@ -1,4 +1,3 @@
-import { promptAction } from '@kit.ArkUI';
 import { ApiService } from '../network/ApiService';
 import {
   CommentInfo,
@@ -33,6 +32,11 @@ struct AlbumCommentPage {
       this.albumName = params.albumName || '评论';
     }
     this.loadComments();
+  }
+
+  /** Toast 统一走 UIContext 形态（开发规范 §5.5，禁模块级 promptAction 直呼） */
+  private showToast(message: string, duration: number = 2000): void {
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: duration });
   }
 
   aboutToDisappear(): void {
@@ -79,7 +83,7 @@ struct AlbumCommentPage {
     if (!this.sendText.trim()) return;
     if (!this.apiService.isLoggedIn()) {
       try {
-        await promptAction.showToast({ message: '请先登录后再评论', duration: 2000 });
+        this.showToast('请先登录后再评论');
       } catch (e) {
         console.error('[AlbumCommentPage] showToast error:', JSON.stringify(e));
       }
@@ -93,7 +97,7 @@ struct AlbumCommentPage {
       this.currentPage = 1;
       await this.loadComments();
       try {
-        await promptAction.showToast({ message: msg || '评论成功', duration: 2000 });
+        this.showToast(msg || '评论成功');
       } catch (e) {
         console.error('[AlbumCommentPage] showToast error:', JSON.stringify(e));
       }
@@ -101,7 +105,7 @@ struct AlbumCommentPage {
       let errMsg = (err as Error).message || '评论失败';
       console.error('[AlbumCommentPage] sendComment error:', JSON.stringify(err));
       try {
-        await promptAction.showToast({ message: errMsg, duration: 2000 });
+        this.showToast(errMsg);
       } catch (e) {
         // ignore
       }
@@ -111,7 +115,7 @@ struct AlbumCommentPage {
   async handleSendReply(commentId: string, albumId: string, text: string): Promise<void> {
     if (!this.apiService.isLoggedIn()) {
       try {
-        await promptAction.showToast({ message: '请先登录后再回复', duration: 2000 });
+        this.showToast('请先登录后再回复');
       } catch (e) {
         console.error('[AlbumCommentPage] showToast error:', JSON.stringify(e));
       }
@@ -123,14 +127,14 @@ struct AlbumCommentPage {
       this.currentPage = 1;
       await this.loadComments();
       try {
-        await promptAction.showToast({ message: msg || '回复成功', duration: 1500 });
+        this.showToast(msg || '回复成功', 1500);
       } catch (e) {
         // ignore
       }
     } catch (err) {
       console.error('[AlbumCommentPage] 回复失败:', JSON.stringify(err));
       try {
-        await promptAction.showToast({ message: '回复失败', duration: 2000 });
+        this.showToast('回复失败');
       } catch (e) {
         // ignore
       }
@@ -269,12 +273,15 @@ struct AlbumCommentPage {
             .padding({ left: 16, right: 16 })
             .onChange((value: string) => { this.sendText = value; })
 
-          Text('发送')
-            .fontSize(15)
-            .fontColor($r('app.color.brand'))
-            .fontWeight(FontWeight.Medium)
-            .padding({ left: 12, right: 8 })
-            .onClick(() => this.onSendComment())
+          Stack() {
+            Text('发送')
+              .fontSize(15)
+              .fontColor($r('app.color.brand'))
+              .fontWeight(FontWeight.Medium)
+          }
+          .width(40)
+          .height(40)
+          .onClick(() => this.onSendComment())
         }
         .width('100%')
         .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 28 })

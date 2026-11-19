@@ -1,4 +1,3 @@
-import { promptAction } from '@kit.ArkUI';
 import { common, wantAgent } from '@kit.AbilityKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
@@ -183,7 +182,7 @@ struct AlbumDetailPage {
     if (this.favLoading) return;
     if (!this.apiService.isLoggedIn()) {
       try {
-        await promptAction.showToast({ message: '请先登录后再收藏', duration: 2000 });
+        this.showToast('请先登录后再收藏');
       } catch (e) {
         console.error('[AlbumDetailPage] showToast error:', JSON.stringify(e));
       }
@@ -206,6 +205,11 @@ struct AlbumDetailPage {
     navPop();
   }
 
+  /** Toast 统一走 UIContext 形态（开发规范 §5.5，禁模块级 promptAction 直呼） */
+  private showToast(message: string, duration: number = 2000): void {
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: duration });
+  }
+
   parseAuthorList(author: string | string[]): string[] {
     if (Array.isArray(author)) {
       return author;
@@ -215,7 +219,7 @@ struct AlbumDetailPage {
 
   async onDownload(): Promise<void> {
     if (this.chapters.length === 0) {
-      try { promptAction.showToast({ message: '暂无章节可下载', duration: 2000 }); } catch (_e) {}
+      this.showToast('暂无章节可下载');
       return;
     }
 
@@ -252,7 +256,7 @@ struct AlbumDetailPage {
           let msg = failed > 0
             ? `下载完成：${success}张成功，${failed}张失败`
             : `下载完成：共${success}张`;
-          try { promptAction.showToast({ message: msg, duration: 5000 }); } catch (_e) {}
+          this.showToast(msg, 5000);
 
           // 下载完成后打包为 zip 并导出到公共目录
           await this.exportAsZip(context, baseDir);
@@ -260,13 +264,13 @@ struct AlbumDetailPage {
         (msg: string) => {
           this.isDownloading = false;
           this.publishErrorNotif(msg);
-          try { promptAction.showToast({ message: `下载失败：${msg}`, duration: 3000 }); } catch (_e) {}
+          this.showToast(`下载失败：${msg}`, 3000);
         }
       );
     } catch (e) {
       this.isDownloading = false;
       console.error('[AlbumDetailPage] download error:', JSON.stringify(e));
-      try { promptAction.showToast({ message: '下载失败', duration: 2000 }); } catch (_e) {}
+      this.showToast('下载失败');
     }
   }
 
@@ -326,12 +330,7 @@ struct AlbumDetailPage {
       if (uris && uris.length > 0) {
         // 复制到用户选择的目录
         fileIo.copyFileSync(zipPath, uris[0]);
-        try {
-          promptAction.showToast({
-            message: `压缩包已保存到 Download/${safeName}.zip (${allFiles.length}张)`,
-            duration: 5000
-          });
-        } catch (_e) {}
+        this.showToast(`压缩包已保存到 Download/${safeName}.zip (${allFiles.length}张)`, 5000);
       }
 
       // 清理临时 zip
@@ -339,7 +338,7 @@ struct AlbumDetailPage {
     } catch (e) {
       console.error('[AlbumDetailPage] zip export error:', JSON.stringify(e));
       try {
-        promptAction.showToast({ message: `打包完成，但导出失败：${JSON.stringify(e)}`, duration: 3000 });
+        this.showToast(`打包完成，但导出失败：${JSON.stringify(e)}`, 3000);
       } catch (_e) {}
     }
   }
@@ -350,7 +349,7 @@ struct AlbumDetailPage {
       this.downloadMgr = null;
     }
     this.isDownloading = false;
-    try { promptAction.showToast({ message: '已取消下载', duration: 2000 }); } catch (_e) {}
+    this.showToast('已取消下载');
   }
 
   private wantAgentObj: object | null = null;
@@ -482,10 +481,10 @@ struct AlbumDetailPage {
       let data = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text);
       let pb = pasteboard.getSystemPasteboard();
       pb.setData(data);
-      promptAction.showToast({ message: '已复制到剪贴板', duration: 2500 });
+      this.showToast('已复制到剪贴板', 2500);
     } catch (e) {
       console.error('[AlbumDetailPage] shareFallback error:', JSON.stringify(e));
-      promptAction.showToast({ message: '分享失败', duration: 2000 });
+      this.showToast('分享失败');
     }
   }
 
@@ -544,7 +543,7 @@ struct AlbumDetailPage {
                     Text((this.album.category as CategoryBean).title || '')
                       .fontSize(12)
                       .fontColor($r('app.color.brand'))
-                      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                      .padding({ left: 10, right: 10, top: 6, bottom: 6 })
                       .backgroundColor($r('app.color.brand_bg'))
                       .borderRadius(4)
                       .margin({ right: 8 })
@@ -669,7 +668,7 @@ struct AlbumDetailPage {
                     Text(name)
                       .fontSize(12)
                       .fontColor($r('app.color.brand'))
-                      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                      .padding({ left: 10, right: 10, top: 6, bottom: 6 })
                       .backgroundColor($r('app.color.brand_bg_strong'))
                       .borderRadius(4)
                       .border({ width: 0.5, color: $r('app.color.brand_border') })
@@ -702,7 +701,7 @@ struct AlbumDetailPage {
                     Text(actor)
                       .fontSize(12)
                       .fontColor($r('app.color.brand'))
-                      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                      .padding({ left: 10, right: 10, top: 6, bottom: 6 })
                       .backgroundColor($r('app.color.brand_bg_strong'))
                       .borderRadius(4)
                       .border({ width: 0.5, color: $r('app.color.brand_border') })
@@ -735,7 +734,7 @@ struct AlbumDetailPage {
                     Text(work)
                       .fontSize(12)
                       .fontColor($r('app.color.brand'))
-                      .padding({ left: 10, right: 10, top: 4, bottom: 4 })
+                      .padding({ left: 10, right: 10, top: 6, bottom: 6 })
                       .backgroundColor($r('app.color.brand_bg_strong'))
                       .borderRadius(4)
                       .border({ width: 0.5, color: $r('app.color.brand_border') })
