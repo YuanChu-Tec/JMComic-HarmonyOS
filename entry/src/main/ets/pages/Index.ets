@@ -1,4 +1,4 @@
-import { display } from '@kit.ArkUI';
+import { display, uiMaterial } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { fileIo } from '@kit.CoreFileKit';
@@ -214,7 +214,7 @@ struct HomePage {
         }
       }
       .width('100%')
-      .padding({ top: this.topSafeHeight + 52, bottom: this.bottomSafeHeight + 100 })
+      .padding({ top: this.topSafeHeight + 64, bottom: this.bottomSafeHeight + 100 })
     }
     .width('100%')
     .height('100%')
@@ -790,7 +790,7 @@ struct ProfilePage {
         }
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: this.topSafeHeight + 40 })
+      .padding({ left: 16, right: 16, top: this.topSafeHeight + 64 })
     }
     .width('100%')
     .height('100%')
@@ -1122,7 +1122,7 @@ struct CategoryPage {
           .width('100%')
           .height('100%')
           .scrollBar(BarState.Off)
-          .padding({ top: this.topSafeHeight + 160 })
+          .padding({ top: this.topSafeHeight + 172 })
           .onReachEnd(() => this.loadMore())
         }
       }
@@ -1457,7 +1457,7 @@ struct ForumPage {
     }
     .width('100%')
     .height('100%')
-    .padding({ top: this.topSafeHeight + 52 })
+    .padding({ top: this.topSafeHeight + 64 })
     .backgroundColor($r('app.color.bg_page'))
   }
 
@@ -1499,6 +1499,28 @@ struct Index {
   private pathStack: NavPathStack = new NavPathStack();
   private controller: HdsTabsController = new HdsTabsController();
   private apiService: ApiService = ApiService.getInstance();
+  // 顶部图标钮沉浸光感材质：API 26 uiMaterial.ImmersiveMaterial + 光感交互反馈；
+  // 模拟器/低版本/不支持设备回退纯色底（compatibleSdk 23，见 NOTICE 待办）
+  private lightMaterial: uiMaterial.ImmersiveMaterial | undefined = this.createLightMaterial();
+
+  private createLightMaterial(): uiMaterial.ImmersiveMaterial | undefined {
+    if (DeviceUtils.isEmulator()) {
+      return undefined;
+    }
+    try {
+      // 低版本运行时无此模块/接口，typeof 探测 + try/catch 双保险
+      if (typeof uiMaterial.isImmersiveMaterialSupported === 'function' && !uiMaterial.isImmersiveMaterialSupported()) {
+        return undefined;
+      }
+      return new uiMaterial.ImmersiveMaterial({
+        style: uiMaterial.ImmersiveStyle.REGULAR,
+        lightEffect: { color: Color.White }
+      });
+    } catch (e) {
+      console.warn('[Index] immersive material unsupported:', JSON.stringify(e));
+      return undefined;
+    }
+  }
 
   async aboutToAppear(): Promise<void> {
     // 注册全局导航栈（须早于任何子组件的跳转调用）
@@ -1635,32 +1657,36 @@ struct Index {
 
         Blank()
 
-        Button({ type: ButtonType.Normal }) {
-          Text('线路')
-            .fontSize(15)
-            .fontColor($r('app.color.text_secondary'))
+        // 线路：40vp 光感圆形图标钮（纯 symbol，无文字）
+        Stack() {
+          SymbolGlyph($r('sys.symbol.link'))
+            .fontSize(22)
+            .fontColor([$r('app.color.text_primary')])
         }
-        .backgroundColor($r('app.color.bg_page'))
-        .borderRadius(18)
-        .width(64)
-        .height(36)
+        .width(40)
+        .height(40)
+        .borderRadius(20)
+        .backgroundColor(this.lightMaterial ? Color.Transparent : $r('app.color.bg_page'))
+        .systemMaterial(this.lightMaterial)
         .margin({ right: 8 })
         .onClick(() => this.onToggleRoute())
 
-        Button({ type: ButtonType.Normal }) {
-          Text('搜索')
-            .fontSize(15)
-            .fontColor($r('app.color.text_secondary'))
+        // 搜索：40vp 光感圆形图标钮（纯 symbol，无文字）
+        Stack() {
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(22)
+            .fontColor([$r('app.color.text_primary')])
         }
-        .backgroundColor($r('app.color.bg_page'))
-        .borderRadius(18)
-        .width(80)
-        .height(36)
+        .width(40)
+        .height(40)
+        .borderRadius(20)
+        .backgroundColor(this.lightMaterial ? Color.Transparent : $r('app.color.bg_page'))
+        .systemMaterial(this.lightMaterial)
         .onClick(() => this.onSearch())
       }
       .position({ x: 0, y: 0 })
       .width('100%')
-      .padding({ left: 16, right: 16, top: this.topSafeHeight + 8, bottom: 4 })
+      .padding({ left: 16, right: 16, top: this.topSafeHeight + 16, bottom: 4 })
       .backgroundColor($r('app.color.header_bg'))
       .backdropBlur(20)
       .zIndex(10)
@@ -1684,7 +1710,7 @@ struct Index {
                 onSelect: (index: number) => { this.onImageRouteSelect(index); }
               } as RouteColumn,
             ] as RouteColumn[],
-            { x: '100%', y: this.topSafeHeight + 48 },
+            { x: '100%', y: this.topSafeHeight + 60 },
             () => { this.showRouteMenu = false; }
           )
         }
