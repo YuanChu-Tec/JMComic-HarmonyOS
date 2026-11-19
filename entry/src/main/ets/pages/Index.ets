@@ -21,7 +21,6 @@ import {
   SECTION_SOURCE_LATEST, SECTION_SOURCE_PROMOTE,
 } from '../common/Constants';
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
-import { RouteColumn, buildRouteMenu, buildMenuOverlay } from '../common/MenuPopup';
 import { CommentItemComponent } from '../common/CommentItem';
 import { DeviceUtils } from 'common';
 import { ThemeSetting } from '../common/ThemeSetting';
@@ -1488,7 +1487,7 @@ struct ForumPage {
 @Component
 struct Index {
   @State currentIndex: number = 0;
-  @State showRouteMenu: boolean = false;
+  @State showRouteSheet: boolean = false;
   @State apiDomains: string[] = [];
   @State imageDomains: string[] = [];
   @State selectedApiIndex: number = -1;
@@ -1550,7 +1549,7 @@ struct Index {
     this.imageDomains = dm.getImageDomains();
     this.selectedApiIndex = dm.getSelectedApiIndex();
     this.selectedImageIndex = dm.getSelectedImageIndex();
-    this.showRouteMenu = true;
+    this.showRouteSheet = true;
   }
 
   onApiRouteSelect(index: number): void {
@@ -1561,6 +1560,99 @@ struct Index {
   onImageRouteSelect(index: number): void {
     this.apiService.getDomainManager().setImageIndex(index);
     this.selectedImageIndex = index;
+  }
+
+  /** 线路选择半模态（bindSheet 标准件）：双组(API/图片)×(自动+N线路)+URL 副文本 */
+  @Builder
+  RouteSheetBuilder() {
+    Column() {
+      Text('选择 API / 图片线路')
+        .fontSize(16)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+        .margin({ bottom: 4 })
+
+      Row({ space: 16 }) {
+        Column() {
+          Text('API')
+            .fontSize(12)
+            .fontColor($r('app.color.text_tertiary'))
+            .width('100%')
+            .margin({ bottom: 4 })
+          // 自动线路：index 约定 -1
+          this.RouteOption(0, -1, '自动', '', (): void => {
+            this.onApiRouteSelect(-1);
+            this.showRouteSheet = false;
+          })
+          ForEach(this.apiDomains, (route: string, index: number) => {
+            this.RouteOption(0, index, '线路' + (index + 1).toString(), route, (): void => {
+              this.onApiRouteSelect(index);
+              this.showRouteSheet = false;
+            })
+          }, (route: string) => route)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Column() {
+          Text('图片')
+            .fontSize(12)
+            .fontColor($r('app.color.text_tertiary'))
+            .width('100%')
+            .margin({ bottom: 4 })
+          this.RouteOption(1, -1, '自动', '', (): void => {
+            this.onImageRouteSelect(-1);
+            this.showRouteSheet = false;
+          })
+          ForEach(this.imageDomains, (route: string, index: number) => {
+            this.RouteOption(1, index, '线路' + (index + 1).toString(), route, (): void => {
+              this.onImageRouteSelect(index);
+              this.showRouteSheet = false;
+            })
+          }, (route: string) => route)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Top)
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 4, bottom: this.bottomSafeHeight + 16 })
+  }
+
+  /**
+   * 单条线路选项行：整行 40vp 点击带 + 选中态 + URL 副文本。
+   * 选中态在 builder 体内直读状态（踩坑记录 §95：参数求值阶段读状态＝零刷新依赖）；
+   * 自动线路 index 约定 -1。
+   */
+  @Builder
+  RouteOption(group: number, index: number, label: string, url: string, onSelect: () => void) {
+    Row() {
+      Text(label)
+        .fontSize(14)
+        .fontWeight((group === 0 ? this.selectedApiIndex : this.selectedImageIndex) === index
+          ? FontWeight.Bold : FontWeight.Normal)
+        .fontColor((group === 0 ? this.selectedApiIndex : this.selectedImageIndex) === index
+          ? $r('app.color.brand') : $r('app.color.text_primary'))
+      if ((group === 0 ? this.selectedApiIndex : this.selectedImageIndex) === index) {
+        Text(' ✓')
+          .fontSize(14)
+          .fontColor($r('app.color.brand'))
+      }
+      Blank()
+      if (url !== '') {
+        Text(url)
+          .fontSize(11)
+          .fontColor($r('app.color.text_tertiary'))
+          .maxLines(1)
+          .constraintSize({ maxWidth: 140 })
+      }
+    }
+    .width('100%')
+    .height(40)
+    .onClick(onSelect)
   }
 
   @Builder TabBarBuilder(icon: Resource, label: string, index: number) {
@@ -1670,6 +1762,12 @@ struct Index {
         .systemMaterial(this.lightMaterial)
         .margin({ right: 8 })
         .onClick(() => this.onToggleRoute())
+        .bindSheet(this.showRouteSheet!!, this.RouteSheetBuilder(), {
+          height: SheetSize.FIT_CONTENT,
+          dragBar: false,
+          showClose: true,
+          preferType: SheetType.BOTTOM
+        })
 
         // 搜索：40vp 光感圆形图标钮（纯 symbol，无文字）
         Stack() {
@@ -1691,33 +1789,6 @@ struct Index {
       .backdropBlur(20)
       .zIndex(10)
 
-      // ── 线路菜单弹窗 ──
-      if (this.showRouteMenu) {
-        Stack() {
-          buildMenuOverlay(() => { this.showRouteMenu = false; })
-          buildRouteMenu(
-            [
-              {
-                title: 'API',
-                routes: this.apiDomains,
-                selectedIndex: this.selectedApiIndex,
-                onSelect: (index: number) => { this.onApiRouteSelect(index); }
-              } as RouteColumn,
-              {
-                title: '图片',
-                routes: this.imageDomains,
-                selectedIndex: this.selectedImageIndex,
-                onSelect: (index: number) => { this.onImageRouteSelect(index); }
-              } as RouteColumn,
-            ] as RouteColumn[],
-            { x: '100%', y: this.topSafeHeight + 60 },
-            () => { this.showRouteMenu = false; }
-          )
-        }
-        .width('100%')
-        .height('100%')
-        .zIndex(100)
-      }
     }
     .width('100%')
     .height('100%')
