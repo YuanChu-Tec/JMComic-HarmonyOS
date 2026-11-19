@@ -937,18 +937,21 @@ struct AlbumDetailPage {
 
       // ── 沉浸式顶部导航栏（毛玻璃浮层） ──
       Row() {
-        // 左：返回按钮
+        // 左：返回按钮（responseRegion 扩大热区：裸 SymbolGlyph 字形仅约 13~24vp 宽，不达 24vp 规范，
+        // 统一采用 SectionMorePage.ets 的 48×48 热区范式；上/左越界部分落在顶栏自身留白内）
         SymbolGlyph($r('sys.symbol.chevron_left'))
           .fontSize(24)
           .fontColor([$r('app.color.text_primary')])
+          .responseRegion({ x: -12, y: -12, width: 48, height: 48 })
           .onClick(() => this.onBack())
 
         Blank()
 
-        // 右：分享
+        // 右：分享（同左，48×48 热区）
         SymbolGlyph($r('sys.symbol.share'))
           .fontSize(24)
           .fontColor([$r('app.color.text_primary')])
+          .responseRegion({ x: -12, y: -12, width: 48, height: 48 })
           .onClick(() => this.onShare())
       }
       .position({ x: 0, y: 0 })
