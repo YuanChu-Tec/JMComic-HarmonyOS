@@ -197,6 +197,8 @@ export class HttpClient {
         expectDataType: http.HttpDataType.STRING,
         connectTimeout: 15000,
         readTimeout: 30000,
+        // 响应体积上限（开发规范 §7.1 封装基线）：API JSON 响应 5MB，防异常大响应撑爆内存
+        maxLimit: 5 * 1024 * 1024,
       });
 
       // 只在成功响应时保存 Cookies，避免错误响应覆盖正确的 cookies
@@ -232,6 +234,8 @@ export class HttpClient {
         expectDataType: http.HttpDataType.ARRAY_BUFFER,
         connectTimeout: 30000,
         readTimeout: 60000,
+        // 二进制（封面/图片）放宽到 20MB，仍防异常响应无限占用内存
+        maxLimit: 20 * 1024 * 1024,
       });
 
       if (response.responseCode === 200) {
