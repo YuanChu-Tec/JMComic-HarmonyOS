@@ -321,7 +321,7 @@ struct AlbumCommentPage {
       }
       .position({ x: 0, y: 0 })
       .width('100%')
-      .padding({ left: 12, right: 12, top: this.topSafeHeight + 20, bottom: 4 })
+      .padding({ left: 12, right: 12, top: this.topSafeHeight + 4, bottom: 4 })
       .backgroundColor($r('app.color.header_bg'))
       .backdropBlur(20)
       .zIndex(10)

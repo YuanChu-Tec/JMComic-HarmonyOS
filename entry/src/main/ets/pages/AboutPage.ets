@@ -44,7 +44,7 @@ struct AboutPage {
           .margin({ right: 36 })
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: this.topSafeHeight + 12, bottom: 12 })
+      .padding({ left: 16, right: 16, top: this.topSafeHeight + 6, bottom: 6 })
       .backgroundColor($r('app.color.bg_card'))
 
       // ── 内容区 ──

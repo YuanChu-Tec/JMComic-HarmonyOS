@@ -320,13 +320,16 @@ struct SectionMorePage {
 
       // ── 顶部栏（浮层 + 毛玻璃） ──
       Row() {
-        SymbolGlyph($r('sys.symbol.chevron_left'))
-          .fontSize(24)
-          .fontColor([$r('app.color.text_primary')])
-          // 扩大点击热区：上/左各扩 12vp，下扩 10vp，左右共 48vp 宽。
-          // 扩展后底边距首个卡片顶部仍有 24vp 以上间距，不影响其响应
-          .responseRegion({ x: -18, y: -12, width: 48, height: 46 })
-          .onClick(() => this.onBack())
+        // 返回：40×40 标准点击体（与其他页统一；原 responseRegion 热区方案废弃，
+        // 裸 SymbolGlyph 时代本页净高仅约 37vp，低于 mini 模式 48vp 下限）
+        Stack() {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(24)
+            .fontColor([$r('app.color.text_primary')])
+        }
+        .width(40)
+        .height(40)
+        .onClick(() => this.onBack())
 
         Text(this.sectionTitle)
           .fontSize(18)
@@ -339,7 +342,7 @@ struct SectionMorePage {
       }
       .position({ x: 0, y: 0 })
       .width('100%')
-      .padding({ left: 12, right: 16, top: this.topSafeHeight + 8, bottom: 4 })
+      .padding({ left: 12, right: 16, top: this.topSafeHeight + 4, bottom: 4 })
       .backgroundColor($r('app.color.header_bg'))
       .backdropBlur(20)
       .zIndex(10)

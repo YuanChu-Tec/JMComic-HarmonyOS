@@ -403,7 +403,7 @@ struct SearchPage {
       }
       .position({ x: 0, y: 0 })
       .width('100%')
-      .padding({ left: 12, right: 16, top: this.topSafeHeight + 8, bottom: 4 })
+      .padding({ left: 12, right: 16, top: this.topSafeHeight + 4, bottom: 4 })
       .backgroundColor($r('app.color.header_bg'))
       .backdropBlur(20)
       .zIndex(10)

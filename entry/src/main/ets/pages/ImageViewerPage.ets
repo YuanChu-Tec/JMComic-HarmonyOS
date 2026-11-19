@@ -841,7 +841,7 @@ struct ImageViewerPage {
               .fontColor(['#00000000'])
           }
           .width('100%')
-          .padding({ left: 12, right: 12, top: this.topSafeHeight + 8, bottom: 8 })
+          .padding({ left: 12, right: 12, top: this.topSafeHeight + 4, bottom: 4 })
           .backgroundColor('rgba(0,0,0,0.5)')
           .backdropBlur(20)
 

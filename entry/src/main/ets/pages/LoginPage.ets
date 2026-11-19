@@ -132,7 +132,7 @@ struct LoginPage {
         Row().width(40).height(40)
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: this.topSafeHeight + 8, bottom: 4 })
+      .padding({ left: 16, right: 16, top: this.topSafeHeight + 4, bottom: 4 })
       .backgroundColor($r('app.color.bg_card'))
 
       Divider().height(1).color($r('app.color.divider'))
