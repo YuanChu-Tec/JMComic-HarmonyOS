@@ -1,9 +1,10 @@
-import { router, display, promptAction } from '@kit.ArkUI';
+import { display, promptAction } from '@kit.ArkUI';
 import { ApiService } from '../network/ApiService';
 import { AlbumViewModel, JmAlbumInfo, IAlbumViewModelJSON } from '../models/Album';
 import { CacheManager } from '../common/CacheManager';
+import { navPush, navPop } from '../common/NavHelper';
+import { AlbumDetailParams } from '../common/RouteParams';
 
-@Entry
 @Component
 struct SearchPage {
   @State keyword: string = '';
@@ -20,10 +21,11 @@ struct SearchPage {
   private cache: CacheManager | null = null;
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
 
-  async aboutToAppear(): Promise<void> {
+  // NavDestination 标准入口：参数与数据加载移入 onReady（原 router.getParams 时代在 aboutToAppear）
+  private async onPageReady(ctx: NavDestinationContext): Promise<void> {
     this.cache = await CacheManager.getInstance();
     this.searchHistory = this.cache.getSearchHistory();
-    let params = router.getParams() as Record<string, string>;
+    let params = ctx.pathInfo.param as Record<string, string> | null;
     if (params && params.keyword) {
       this.keyword = params.keyword;
       this.doSearch();
@@ -44,10 +46,7 @@ struct SearchPage {
             this.cache.addSearchHistory(kw);
             this.searchHistory = this.cache.getSearchHistory();
           }
-          router.pushUrl({
-            url: 'pages/AlbumDetailPage',
-            params: { albumId: parseInt(kw), albumName: resp.data.name || '' }
-          });
+          navPush('AlbumDetailPage', { albumId: parseInt(kw), albumName: resp.data.name || '' } as AlbumDetailParams);
         } else {
           console.error(`[SearchPage] album id=${kw} not found: ${resp.message}`);
           this.showToast('未找到该漫画');
@@ -142,10 +141,7 @@ struct SearchPage {
   }
 
   onAlbumClick(album: AlbumViewModel): void {
-    router.pushUrl({
-      url: 'pages/AlbumDetailPage',
-      params: { albumId: album.id, albumName: album.name }
-    });
+    navPush('AlbumDetailPage', { albumId: album.id, albumName: album.name } as AlbumDetailParams);
   }
 
   onBack(): void {
@@ -155,10 +151,11 @@ struct SearchPage {
       this.currentPage = 1;
       this.hasMore = false;
     } else {
-      router.back();
+      navPop();
     }
   }
 
+  // 系统返回拦截（原 @Entry onBackPress → NavDestination.onBackPressed）
   onBackPress(): boolean {
     if (this.hasSearched) {
       this.onBack();
@@ -168,6 +165,7 @@ struct SearchPage {
   }
 
   build() {
+    NavDestination() {
     Stack() {
       // ── 内容区域（延伸到搜索栏背后） ──
       Column() {
@@ -408,6 +406,12 @@ struct SearchPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.bg_card'))
+    }
+    .hideTitleBar(true)
+    .onReady((ctx: NavDestinationContext) => {
+      this.onPageReady(ctx);
+    })
+    .onBackPressed(() => this.onBackPress())
   }
 
   @Builder
@@ -464,4 +468,12 @@ struct SearchPage {
       offsetY: 2
     })
   }
+}
+
+/**
+ * 系统路由表入口（router_map.json 的 buildFunction），函数名须与配置完全一致
+ */
+@Builder
+export function SearchPageBuilder() {
+  SearchPage();
 }

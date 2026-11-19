@@ -1,4 +1,3 @@
-import { router } from '@kit.ArkUI';
 import { image } from '@kit.ImageKit';
 import { http } from '@kit.NetworkKit';
 import { ApiService } from '../network/ApiService';
@@ -7,20 +6,12 @@ import { ImageDecodeUtils } from '../common/ImageDecodeUtils';
 import { DecodedImageCache } from '../common/DecodedImageCache';
 import { APP_HEADERS_IMAGE } from '../common/Constants';
 import { JmImageInfo, PictureData } from '../models/Album';
+import { navPop } from '../common/NavHelper';
+import { ImageViewerParams } from '../common/RouteParams';
 
 interface ChapterInfo {
   photoId: string;
   photoName: string;
-}
-
-interface RouterParams {
-  photoId: string;
-  photoName: string;
-  scrambleId: number;
-  albumId: number;
-  albumName: string;
-  chaptersStr?: string;
-  currentChapterIndex?: number;
 }
 
 // ── LazyForEach 数据源 ──
@@ -55,7 +46,6 @@ class ImageDataSource implements IDataSource {
   }
 }
 
-@Entry
 @Component
 struct ImageViewerPage {
   @State images: JmImageInfo[] = [];
@@ -111,8 +101,9 @@ struct ImageViewerPage {
   // 翻转以强制 Swiper 在切章时重建（回到首页），避免沿用上一章索引
   @State swiperToggle: boolean = false;
 
-  aboutToAppear(): void {
-    let params = router.getParams() as RouterParams;
+  // NavDestination 标准入口：参数与数据加载移入 onReady（原 router.getParams 时代在 aboutToAppear）
+  private onPageReady(ctx: NavDestinationContext): void {
+    let params = ctx.pathInfo.param as ImageViewerParams | null;
     if (params) {
       this.photoId = params.photoId;
       this.scrambleId = params.scrambleId;
@@ -206,7 +197,7 @@ struct ImageViewerPage {
 
   onBack(): void {
     this.flushSavePosition();
-    router.back();
+    navPop();
   }
 
   toggleControls(): void {
@@ -678,6 +669,7 @@ struct ImageViewerPage {
   }
 
   build() {
+    NavDestination() {
     Stack({ alignContent: Alignment.TopStart }) {
       if (this.isLoading) {
         Column() {
@@ -903,5 +895,18 @@ struct ImageViewerPage {
     .width('100%')
     .height('100%')
     .backgroundColor('#1A1A1A')
+    }
+    .hideTitleBar(true)
+    .onReady((ctx: NavDestinationContext) => {
+      this.onPageReady(ctx);
+    })
   }
+}
+
+/**
+ * 系统路由表入口（router_map.json 的 buildFunction），函数名须与配置完全一致
+ */
+@Builder
+export function ImageViewerPageBuilder() {
+  ImageViewerPage();
 }

@@ -1,13 +1,5 @@
 {
   "src": [
-    "pages/Index",
-    "pages/SearchPage",
-    "pages/AlbumDetailPage",
-    "pages/ImageViewerPage",
-    "pages/LoginPage",
-    "pages/DownloadPage",
-    "pages/AlbumCommentPage",
-    "pages/AboutPage",
-    "pages/SectionMorePage"
+    "pages/Index"
   ]
 }

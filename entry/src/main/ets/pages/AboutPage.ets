@@ -1,13 +1,12 @@
-import { router } from '@kit.ArkUI';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { common, Want } from '@kit.AbilityKit';
 import { ApiService } from '../network/ApiService';
 import { UpdateManager, RELEASES_PAGE_URL } from '../common/UpdateManager';
+import { navPop } from '../common/NavHelper';
 
 /**
  * 防失联页面 — 展示官方及开发者联系方式
  */
-@Entry
 @Component
 struct AboutPage {
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
@@ -22,6 +21,7 @@ struct AboutPage {
   }
 
   build() {
+    NavDestination() {
     Column() {
       // ── 顶部栏 ──
       Row() {
@@ -33,7 +33,7 @@ struct AboutPage {
         .backgroundColor(Color.Transparent)
         .width(36)
         .height(36)
-        .onClick(() => router.back())
+        .onClick(() => navPop())
 
         Text('防失联')
           .fontSize(20)
@@ -307,6 +307,8 @@ struct AboutPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.bg_page'))
+    }
+    .hideTitleBar(true)
   }
 
   /** 读取当前版本 + 拉取最新版本 */
@@ -350,4 +352,12 @@ struct AboutPage {
       console.error('[AboutPage] 复制失败: ' + err.message);
     });
   }
+}
+
+/**
+ * 系统路由表入口（router_map.json 的 buildFunction），函数名须与配置完全一致
+ */
+@Builder
+export function AboutPageBuilder() {
+  AboutPage();
 }

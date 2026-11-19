@@ -50,6 +50,17 @@ export default class EntryAbility extends UIAbility {
       let bottomHeight = px2vp(navigationArea.bottomRect.height);
       AppStorage.setOrCreate('bottomSafeHeight', bottomHeight);
 
+      // 避让区变化（旋转/折叠屏展开合拢/自由窗口拖拽）时动态更新，
+      // @StorageProp 会把新值自动推送到全部页面
+      windowClass.on('avoidAreaChange', (data: window.AvoidAreaOptions) => {
+        if (data.type === window.AvoidAreaType.TYPE_SYSTEM) {
+          AppStorage.setOrCreate('topSafeHeight', px2vp(data.area.topRect.height));
+        } else if (data.type === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR) {
+          AppStorage.setOrCreate('bottomSafeHeight', px2vp(data.area.bottomRect.height));
+        }
+        hilog.info(DOMAIN, 'testTag', 'avoidAreaChange updated');
+      });
+
       hilog.info(DOMAIN, 'testTag', `topSafeHeight=${topHeight}, bottomSafeHeight=${bottomHeight}`);
     });
 

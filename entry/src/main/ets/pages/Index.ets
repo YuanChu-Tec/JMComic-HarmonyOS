@@ -1,4 +1,4 @@
-import { router, display, promptAction } from '@kit.ArkUI';
+import { display, promptAction } from '@kit.ArkUI';
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { fileIo } from '@kit.CoreFileKit';
@@ -26,6 +26,8 @@ import { CommentItemComponent } from '../common/CommentItem';
 import { DeviceUtils } from 'common';
 import { ThemeSetting } from '../common/ThemeSetting';
 import { JmAlbumCard } from './JmAlbumCard';
+import { navPush } from '../common/NavHelper';
+import { AlbumDetailParams, SectionMoreParams } from '../common/RouteParams';
 
 interface OrderItem {
   key: string;
@@ -47,6 +49,7 @@ struct HomePage {
   @State isLoading: boolean = true;
   @State loadFailed: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
+  @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
 
@@ -80,10 +83,7 @@ struct HomePage {
   }
 
   onSectionMore(title: string, albums: RespJmAlbumInfo[], source: string): void {
-    router.pushUrl({
-      url: 'pages/SectionMorePage',
-      params: { sectionTitle: title, initialAlbums: albums, source: source }
-    });
+    navPush('SectionMorePage', { sectionTitle: title, initialAlbums: albums, source: source } as SectionMoreParams);
   }
 
   @Builder
@@ -213,7 +213,7 @@ struct HomePage {
         }
       }
       .width('100%')
-      .padding({ top: this.topSafeHeight + 52 })
+      .padding({ top: this.topSafeHeight + 52, bottom: this.bottomSafeHeight + 100 })
     }
     .width('100%')
     .height('100%')
@@ -288,7 +288,7 @@ struct ProfilePage {
 
   async onLogin(): Promise<void> {
     if (!this.isLoggedIn) {
-      router.pushUrl({ url: 'pages/LoginPage' });
+      navPush('LoginPage');
     }
   }
 
@@ -427,10 +427,7 @@ struct ProfilePage {
   }
 
   onAlbumClick(album: AlbumViewModel): void {
-    router.pushUrl({
-      url: 'pages/AlbumDetailPage',
-      params: { albumId: album.id, albumName: album.name }
-    });
+    navPush('AlbumDetailPage', { albumId: album.id, albumName: album.name } as AlbumDetailParams);
   }
 
   build() {
@@ -619,7 +616,7 @@ struct ProfilePage {
                     }
                   }
                   .width('100%')
-                  .padding({ bottom: 80 })
+                  .padding({ bottom: this.bottomSafeHeight + 100 })
                 }
               }
               .width('100%')
@@ -713,7 +710,7 @@ struct ProfilePage {
                     }
                   }
                   .width('100%')
-                  .padding({ bottom: 80 })
+                  .padding({ bottom: this.bottomSafeHeight + 100 })
                 }
               }
               .width('100%')
@@ -1013,34 +1010,14 @@ struct CategoryPage {
   }
 
   onAlbumClick(album: AlbumViewModel): void {
-    router.pushUrl({
-      url: 'pages/AlbumDetailPage',
-      params: { albumId: album.id, albumName: album.name }
-    });
+    navPush('AlbumDetailPage', { albumId: album.id, albumName: album.name } as AlbumDetailParams);
   }
 
-  onSearch(): void {
-    router.pushUrl({
-      url: 'pages/SearchPage'
-    });
-  }
-
-  onLogin(): void {
-    router.pushUrl({
-      url: 'pages/LoginPage'
-    });
-  }
+  // 注：原 onSearch/onLogin/onFavorites 为无调用的死代码（onFavorites 指向不存在的
+  // pages/FavoritePage），随 router 迁移一并删除。
 
   onMoreCategory(): void {
-    router.pushUrl({
-      url: 'pages/SearchPage'
-    });
-  }
-
-  onFavorites(): void {
-    router.pushUrl({
-      url: 'pages/FavoritePage'
-    });
+    navPush('SearchPage');
   }
 
   build() {
@@ -1137,11 +1114,13 @@ struct CategoryPage {
               }
             }
             .width('100%')
+            // 内容尾部留白：视口撑满全屏（延伸到悬浮 TabBar/导航条背后），由内容垫高避让
+            .padding({ bottom: this.bottomSafeHeight + 100 })
           }
           .width('100%')
           .height('100%')
           .scrollBar(BarState.Off)
-          .padding({ top: this.topSafeHeight + 160, bottom: 80 })
+          .padding({ top: this.topSafeHeight + 160 })
           .onReachEnd(() => this.loadMore())
         }
       }
@@ -1461,7 +1440,8 @@ struct ForumPage {
                 .padding({ top: 16, bottom: 16 })
             }
           }
-          .width('100%')
+          // 内容尾部留白：视口撑满全屏（延伸到悬浮 TabBar/导航条背后），由内容垫高避让
+          .padding({ bottom: this.bottomSafeHeight + 100 })
         }
         .layoutWeight(1)
         .width('100%')
@@ -1475,7 +1455,7 @@ struct ForumPage {
     }
     .width('100%')
     .height('100%')
-    .padding({ top: this.topSafeHeight + 52, bottom: 80 })
+    .padding({ top: this.topSafeHeight + 52 })
     .backgroundColor($r('app.color.bg_page'))
   }
 
@@ -1512,10 +1492,15 @@ struct Index {
   @State selectedApiIndex: number = -1;
   @State selectedImageIndex: number = -1;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
+  @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
+  // Navigation 根容器导航栈：唯一实例，经 AppStorage 供全部页面/组件使用（NavHelper）
+  private pathStack: NavPathStack = new NavPathStack();
   private controller: HdsTabsController = new HdsTabsController();
   private apiService: ApiService = ApiService.getInstance();
 
   async aboutToAppear(): Promise<void> {
+    // 注册全局导航栈（须早于任何子组件的跳转调用）
+    AppStorage.setOrCreate('navPathStack', this.pathStack);
     // 自动登录：从 preferences 读取已保存的凭据
     try {
       let prefs = await preferences.getPreferences(getContext(), 'JMComicUser');
@@ -1532,7 +1517,7 @@ struct Index {
   }
 
   onSearch(): void {
-    router.pushUrl({ url: 'pages/SearchPage' });
+    navPush('SearchPage');
   }
 
   onToggleRoute(): void {
@@ -1569,7 +1554,8 @@ struct Index {
   }
 
   build() {
-    Stack() {
+    Navigation(this.pathStack) {
+      Stack() {
       // ── 全屏 HdsTabs（内容可延伸到顶部栏背后）──
       if (canIUse("SystemCapability.UIDesign.HDSComponent.Core")) {
         HdsTabs({ controller: this.controller, index: this.currentIndex }) {
@@ -1601,7 +1587,7 @@ struct Index {
         .barPosition(BarPosition.End)
         .barOverlap(true)
         .barFloatingStyle({
-          barBottomMargin: 16,
+          barBottomMargin: this.bottomSafeHeight + 28,
           systemMaterialEffect: DeviceUtils.isEmulator() ? undefined : {
             materialType: hdsMaterial.MaterialType.IMMERSIVE,
             materialLevel: hdsMaterial.MaterialLevel.EXQUISITE
@@ -1635,7 +1621,7 @@ struct Index {
         .height(32)
         .padding({ left: 10, right: 10 })
         .margin({ left: 8 })
-        .onClick(() => router.pushUrl({ url: 'pages/AboutPage' }))
+        .onClick(() => navPush('AboutPage'))
 
         Blank()
 
@@ -1700,5 +1686,8 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.bg_page'))
+    }
+    .mode(NavigationMode.Stack)
+    .hideTitleBar(true)
   }
 }

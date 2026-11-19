@@ -1,6 +1,7 @@
 import { JmAlbumInfo } from "../models/Album";
 import { ApiService } from "../network/ApiService";
-import { router } from "@kit.ArkUI";
+import { navPush } from "../common/NavHelper";
+import { AlbumDetailParams } from "../common/RouteParams";
 
 @Component
 export struct JmAlbumCard {
@@ -59,9 +60,6 @@ export struct JmAlbumCard {
   }
 
   onAlbumClick(album: JmAlbumInfo): void {
-    router.pushUrl({
-      url: 'pages/AlbumDetailPage',
-      params: { albumId: album.id, albumName: album.name }
-    });
+    navPush('AlbumDetailPage', { albumId: album.id, albumName: album.name } as AlbumDetailParams);
   }
 }

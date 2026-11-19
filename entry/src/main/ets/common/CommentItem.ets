@@ -2,7 +2,8 @@ import { ApiService } from '../network/ApiService';
 import {
   CommentInfo,
 } from '../models/Album';
-import { router } from '@kit.ArkUI';
+import { navPush } from './NavHelper';
+import { AlbumDetailParams } from './RouteParams';
 
 @Component
 export struct CommentItemComponent {
@@ -27,10 +28,8 @@ export struct CommentItemComponent {
   // 点击关联漫画跳转
   onLinkClick(): void {
     if (this.comment.linkBookId) {
-      router.pushUrl({
-        url: 'pages/AlbumDetailPage',
-        params: { albumId: parseInt(this.comment.linkBookId) || 0, albumName: this.comment.linkBookName }
-      });
+      navPush('AlbumDetailPage',
+        { albumId: parseInt(this.comment.linkBookId) || 0, albumName: this.comment.linkBookName } as AlbumDetailParams);
     }
   }
 

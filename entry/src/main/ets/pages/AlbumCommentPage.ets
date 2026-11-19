@@ -1,4 +1,4 @@
-import { router, promptAction } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
 import { ApiService } from '../network/ApiService';
 import {
   CommentInfo,
@@ -6,13 +6,9 @@ import {
   parseCommentRaw,
 } from '../models/Album';
 import { CommentItemComponent } from '../common/CommentItem';
+import { navPop } from '../common/NavHelper';
+import { CommentPageParams } from '../common/RouteParams';
 
-interface CommentPageParams {
-  albumId: number;
-  albumName: string;
-}
-
-@Entry
 @Component
 struct AlbumCommentPage {
   @State comments: CommentInfo[] = [];
@@ -29,8 +25,9 @@ struct AlbumCommentPage {
   private albumId: number = 0;
   private apiService: ApiService = ApiService.getInstance();
 
-  aboutToAppear(): void {
-    let params = router.getParams() as CommentPageParams;
+  // NavDestination 标准入口：参数与数据加载移入 onReady（原 router.getParams 时代在 aboutToAppear）
+  private onPageReady(ctx: NavDestinationContext): void {
+    let params = ctx.pathInfo.param as CommentPageParams | null;
     if (params) {
       this.albumId = params.albumId;
       this.albumName = params.albumName || '评论';
@@ -141,10 +138,11 @@ struct AlbumCommentPage {
   }
 
   onBack(): void {
-    router.back();
+    navPop();
   }
 
   build() {
+    NavDestination() {
     Stack() {
       Column() {
         if (this.isLoading) {
@@ -326,5 +324,18 @@ struct AlbumCommentPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.bg_card'))
+    }
+    .hideTitleBar(true)
+    .onReady((ctx: NavDestinationContext) => {
+      this.onPageReady(ctx);
+    })
   }
+}
+
+/**
+ * 系统路由表入口（router_map.json 的 buildFunction），函数名须与配置完全一致
+ */
+@Builder
+export function AlbumCommentPageBuilder() {
+  AlbumCommentPage();
 }

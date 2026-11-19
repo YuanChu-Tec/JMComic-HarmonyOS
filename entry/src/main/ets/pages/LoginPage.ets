@@ -1,6 +1,6 @@
-import { router } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { ApiService } from '../network/ApiService';
+import { navPop } from '../common/NavHelper';
 
 const PREF_NAME = 'JMComicUser';
 
@@ -8,7 +8,6 @@ const PREF_NAME = 'JMComicUser';
  * 登录页面
  * 支持用户名+密码登录，自动保存凭据
  */
-@Entry
 @Component
 struct LoginPage {
   @State username: string = '';
@@ -88,7 +87,7 @@ struct LoginPage {
       console.info('[LoginPage] session.uid=' + session.uid + ', username=' + session.username);
       console.info('[LoginPage] session.isLoggedIn=' + session.isLoggedIn);
       console.info('[LoginPage] apiService.isLoggedIn()=' + this.apiService.isLoggedIn());
-      router.back();
+      navPop();
     } catch (err) {
       let msg = (err as Error).message;
       if (msg.includes('账号或密码错误')) {
@@ -104,10 +103,11 @@ struct LoginPage {
   }
 
   onBack(): void {
-    router.back();
+    navPop();
   }
 
   build() {
+    NavDestination() {
     Column() {
       // ── 顶部标题栏 ──
       Row() {
@@ -224,5 +224,15 @@ struct LoginPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.bg_card'))
+    }
+    .hideTitleBar(true)
   }
+}
+
+/**
+ * 系统路由表入口（router_map.json 的 buildFunction），函数名须与配置完全一致
+ */
+@Builder
+export function LoginPageBuilder() {
+  LoginPage();
 }

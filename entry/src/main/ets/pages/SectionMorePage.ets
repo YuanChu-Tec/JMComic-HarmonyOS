@@ -1,4 +1,4 @@
-import { router, display } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { ApiService } from '../network/ApiService';
 import {
@@ -7,21 +7,16 @@ import {
 } from '../models/Album';
 import { JmAlbumCard } from './JmAlbumCard';
 import { SECTION_SOURCE_LATEST, SECTION_SOURCE_PROMOTE } from '../common/Constants';
+import { navPop } from '../common/NavHelper';
+// 参数形状复用中央定义（原本地 interface SectionMorePageParams）
+import { SectionMoreParams } from '../common/RouteParams';
 
 const MORE_TAG: string = 'SectionMore';
-
-interface SectionMorePageParams {
-  sectionTitle: string;
-  initialAlbums: RespJmAlbumInfo[];
-  // 数据来源：latest / promote，由首页显式传入，避免依赖标题文案
-  source?: string;
-}
 
 /**
  * 分区「更多」页
  * 初次进入直接展示首页已加载的分区数据（不重新请求），滑动到底部后再加载后续页
  */
-@Entry
 @Component
 struct SectionMorePage {
   @State albums: JmAlbumInfo[] = [];
@@ -41,8 +36,9 @@ struct SectionMorePage {
   private scroller: Scroller = new Scroller();
   private isBackTopScrolling: boolean = false;
 
-  aboutToAppear(): void {
-    let params = router.getParams() as SectionMorePageParams;
+  // NavDestination 标准入口：参数与数据加载移入 onReady（原 router.getParams 时代在 aboutToAppear）
+  private onPageReady(ctx: NavDestinationContext): void {
+    let params = ctx.pathInfo.param as SectionMoreParams | null;
     if (params) {
       if (params.sectionTitle) {
         this.sectionTitle = params.sectionTitle;
@@ -178,7 +174,7 @@ struct SectionMorePage {
   }
 
   onBack(): void {
-    router.back();
+    navPop();
   }
 
   onBackTop(): void {
@@ -188,6 +184,7 @@ struct SectionMorePage {
   }
 
   build() {
+    NavDestination() {
     Stack() {
       // ── 内容区域 ──
       Column() {
@@ -367,5 +364,18 @@ struct SectionMorePage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.bg_card'))
+    }
+    .hideTitleBar(true)
+    .onReady((ctx: NavDestinationContext) => {
+      this.onPageReady(ctx);
+    })
   }
+}
+
+/**
+ * 系统路由表入口（router_map.json 的 buildFunction），函数名须与配置完全一致
+ */
+@Builder
+export function SectionMorePageBuilder() {
+  SectionMorePage();
 }

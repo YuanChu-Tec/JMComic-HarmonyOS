@@ -1,4 +1,4 @@
-import { router } from '@kit.ArkUI';
+import { navPop } from '../common/NavHelper';
 import { DownloadService } from '../network/DownloadService';
 import { DownloadTask, DownloadStatus } from '../models/Album';
 
@@ -6,7 +6,6 @@ import { DownloadTask, DownloadStatus } from '../models/Album';
  * 下载管理页面
  * 展示下载队列、进度、支持暂停/继续/删除
  */
-@Entry
 @Component
 struct DownloadPage {
   @State tasks: DownloadTask[] = [];
@@ -28,7 +27,7 @@ struct DownloadPage {
   }
 
   onBack(): void {
-    router.back();
+    navPop();
   }
 
   onPause(taskId: string): void {
@@ -80,6 +79,7 @@ struct DownloadPage {
   }
 
   build() {
+    NavDestination() {
     Column() {
       // ── 顶部标题栏 ──
       Row() {
@@ -149,6 +149,8 @@ struct DownloadPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.bg_page_alt'))
+    }
+    .hideTitleBar(true)
   }
 
   @Builder
@@ -274,4 +276,12 @@ struct DownloadPage {
     .borderRadius(8)
     .margin({ bottom: 8 })
   }
+}
+
+/**
+ * 系统路由表入口（router_map.json 的 buildFunction），函数名须与配置完全一致
+ */
+@Builder
+export function DownloadPageBuilder() {
+  DownloadPage();
 }

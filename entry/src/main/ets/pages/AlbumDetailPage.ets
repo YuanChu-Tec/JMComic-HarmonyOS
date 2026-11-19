@@ -1,4 +1,4 @@
-import { router, promptAction } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
 import { common, wantAgent } from '@kit.AbilityKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
@@ -19,11 +19,8 @@ import {
   CategoryBean,
   FavoriteAlbumItem
 } from '../models/Album';
-
-interface RouterParams {
-  albumId: number;
-  albumName: string;
-}
+import { navPush, navPop, navReplace } from '../common/NavHelper';
+import { AlbumDetailParams, ImageViewerParams, SearchPageParams, CommentPageParams } from '../common/RouteParams';
 
 interface SeriesItem {
   id: number;
@@ -35,7 +32,6 @@ interface ChapterRouteInfo {
   photoName: string;
 }
 
-@Entry
 @Component
 struct AlbumDetailPage {
   @State album: JmAlbumDetail | null = null;
@@ -59,8 +55,9 @@ struct AlbumDetailPage {
   private cacheManager: CacheManager | null = null;
   private favCheckedId: number = -1; // 已经做过二次校验的 albumId，避免重复请求
 
-  async aboutToAppear(): Promise<void> {
-    let params = router.getParams() as RouterParams;
+  // NavDestination 标准入口：参数与数据加载移入 onReady（原 router.getParams 时代在 aboutToAppear）
+  private async onPageReady(ctx: NavDestinationContext): Promise<void> {
+    let params = ctx.pathInfo.param as AlbumDetailParams | null;
     if (params) {
       this.albumId = params.albumId;
       this.albumName = params.albumName || '详情';
@@ -69,6 +66,7 @@ struct AlbumDetailPage {
     this.loadDetail();
   }
 
+  // 每次页面显示（含子页 pop 返回）时重新校验收藏/已读状态，经 .onShown 绑定
   onPageShow(): void {
     // 每次页面显示时重新校验收藏状态和已读状态
     if (this.isLoggedIn && this.album) {
@@ -170,18 +168,15 @@ struct AlbumDetailPage {
       return { photoId: ch.photoId, photoName: ch.name } as ChapterRouteInfo;
     });
     let currentIndex = this.chapters.findIndex(ch => ch.photoId === photo.photoId);
-    router.pushUrl({
-      url: 'pages/ImageViewerPage',
-      params: {
-        photoId: photo.photoId,
-        photoName: photo.name,
-        scrambleId: photo.scrambleId,
-        albumId: this.albumId,
-        albumName: this.albumName,
-        chaptersStr: JSON.stringify(chapters),
-        currentChapterIndex: currentIndex >= 0 ? currentIndex : 0
-      }
-    });
+    navPush('ImageViewerPage', {
+      photoId: photo.photoId,
+      photoName: photo.name,
+      scrambleId: photo.scrambleId,
+      albumId: this.albumId,
+      albumName: this.albumName,
+      chaptersStr: JSON.stringify(chapters),
+      currentChapterIndex: currentIndex >= 0 ? currentIndex : 0
+    } as ImageViewerParams);
   }
 
   async onToggleFavorite(): Promise<void> {
@@ -208,7 +203,7 @@ struct AlbumDetailPage {
   }
 
   onBack(): void {
-    router.back();
+    navPop();
   }
 
   parseAuthorList(author: string | string[]): string[] {
@@ -502,6 +497,7 @@ struct AlbumDetailPage {
   }
 
   build() {
+    NavDestination() {
     Stack() {
       // ── 全屏内容 ──
       if (this.isLoading) {
@@ -649,10 +645,7 @@ struct AlbumDetailPage {
                     .margin({ right: 8, bottom: 8 })
                     .onClick(() => {
                       if (tag) {
-                        router.pushUrl({
-                          url: 'pages/SearchPage',
-                          params: { keyword: tag }
-                        });
+                        navPush('SearchPage', { keyword: tag } as SearchPageParams);
                       }
                     })
                 })
@@ -683,10 +676,7 @@ struct AlbumDetailPage {
                       .margin({ right: 8, bottom: 8 })
                       .onClick(() => {
                         if (name) {
-                          router.pushUrl({
-                            url: 'pages/SearchPage',
-                            params: { keyword: name }
-                          });
+                          navPush('SearchPage', { keyword: name } as SearchPageParams);
                         }
                       })
                   }, (name: string) => name)
@@ -719,10 +709,7 @@ struct AlbumDetailPage {
                       .margin({ right: 8, bottom: 8 })
                       .onClick(() => {
                         if (actor) {
-                          router.pushUrl({
-                            url: 'pages/SearchPage',
-                            params: { keyword: actor }
-                          });
+                          navPush('SearchPage', { keyword: actor } as SearchPageParams);
                         }
                       })
                   }, (actor: string) => actor)
@@ -755,10 +742,7 @@ struct AlbumDetailPage {
                       .margin({ right: 8, bottom: 8 })
                       .onClick(() => {
                         if (work) {
-                          router.pushUrl({
-                            url: 'pages/SearchPage',
-                            params: { keyword: work }
-                          });
+                          navPush('SearchPage', { keyword: work } as SearchPageParams);
                         }
                       })
                   }, (work: string) => work)
@@ -804,10 +788,8 @@ struct AlbumDetailPage {
                   .padding({ left: 24, right: 24 })
                   .margin({ left: 12 })
                   .onClick(() => {
-                    router.pushUrl({
-                      url: 'pages/AlbumCommentPage',
-                      params: { albumId: this.albumId, albumName: this.albumName }
-                    });
+                    navPush('AlbumCommentPage',
+                      { albumId: this.albumId, albumName: this.albumName } as CommentPageParams);
                   })
               }
               .width('100%')
@@ -918,10 +900,7 @@ struct AlbumDetailPage {
                   .padding({ left: 16, right: 16, top: 10, bottom: 10 })
                   .backgroundColor($r('app.color.bg_card'))
                   .onClick(() => {
-                    router.replaceUrl({
-                      url: 'pages/AlbumDetailPage',
-                      params: { albumId: work.id, albumName: work.name }
-                    });
+                    navReplace('AlbumDetailPage', { albumId: work.id, albumName: work.name } as AlbumDetailParams);
                   })
                 })
               }
@@ -982,5 +961,19 @@ struct AlbumDetailPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.bg_card'))
+    }
+    .hideTitleBar(true)
+    .onReady((ctx: NavDestinationContext) => {
+      this.onPageReady(ctx);
+    })
+    .onShown(() => this.onPageShow())
   }
+}
+
+/**
+ * 系统路由表入口（router_map.json 的 buildFunction），函数名须与配置完全一致
+ */
+@Builder
+export function AlbumDetailPageBuilder() {
+  AlbumDetailPage();
 }

@@ -1,0 +1,44 @@
+{
+  "routerMap": [
+    {
+      "name": "SearchPage",
+      "pageSourceFile": "src/main/ets/pages/SearchPage.ets",
+      "buildFunction": "SearchPageBuilder"
+    },
+    {
+      "name": "AlbumDetailPage",
+      "pageSourceFile": "src/main/ets/pages/AlbumDetailPage.ets",
+      "buildFunction": "AlbumDetailPageBuilder"
+    },
+    {
+      "name": "ImageViewerPage",
+      "pageSourceFile": "src/main/ets/pages/ImageViewerPage.ets",
+      "buildFunction": "ImageViewerPageBuilder"
+    },
+    {
+      "name": "LoginPage",
+      "pageSourceFile": "src/main/ets/pages/LoginPage.ets",
+      "buildFunction": "LoginPageBuilder"
+    },
+    {
+      "name": "DownloadPage",
+      "pageSourceFile": "src/main/ets/pages/DownloadPage.ets",
+      "buildFunction": "DownloadPageBuilder"
+    },
+    {
+      "name": "AlbumCommentPage",
+      "pageSourceFile": "src/main/ets/pages/AlbumCommentPage.ets",
+      "buildFunction": "AlbumCommentPageBuilder"
+    },
+    {
+      "name": "AboutPage",
+      "pageSourceFile": "src/main/ets/pages/AboutPage.ets",
+      "buildFunction": "AboutPageBuilder"
+    },
+    {
+      "name": "SectionMorePage",
+      "pageSourceFile": "src/main/ets/pages/SectionMorePage.ets",
+      "buildFunction": "SectionMorePageBuilder"
+    }
+  ]
+}
