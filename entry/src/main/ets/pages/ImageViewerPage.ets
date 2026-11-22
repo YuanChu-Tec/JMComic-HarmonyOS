@@ -62,8 +62,6 @@ struct ImageViewerPage {
   @State readerMode: string = 'scroll';
   @State isPagedMode: boolean = false;
   @State isRtl: boolean = false;
-  // 箭头旋转角度（基础图标为指向正下的 arrow_down，按模式旋转得到各方向）：scroll→0°(下) / paged_ltr→-90°(右) / paged_rtl→90°(左)
-  @State rotateAngle: number = 0;
   private zoomScale: number = 1.0;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
@@ -134,7 +132,6 @@ struct ImageViewerPage {
       this.readerMode = mode;
       this.isPagedMode = (mode !== 'scroll');
       this.isRtl = (mode === 'paged_rtl');
-      this.rotateAngle = this.directionAngle(mode);
       this.decodedCache = await DecodedImageCache.getInstance();
 
       let cached = this.cache!.loadChapterData(this.photoId);
@@ -216,7 +213,6 @@ struct ImageViewerPage {
     this.readerMode = next;
     this.isPagedMode = (next !== 'scroll');
     this.isRtl = (next === 'paged_rtl');
-    this.rotateAngle = this.directionAngle(next);
     this.cache?.setReaderMode(next);
     if (next !== 'scroll') {
       // 进入/切换横向翻页：按 RTL 映射设置初始索引，挂载时直接定位；翻转 swiperToggle 重建 Swiper
@@ -237,16 +233,35 @@ struct ImageViewerPage {
     }
   }
 
-  /** 阅读模式 -> 箭头旋转角度（基础图标 arrow_down 指向正下：scroll 下=0° / paged_ltr 右=-90° / paged_rtl 左=90°） */
-  private directionAngle(mode: string): number {
-    let base: number = mode === 'scroll' ? 0 : (mode === 'paged_rtl' ? 90 : -90);
-    // 取一个不大于当前角度的等价角(±360)，使箭头始终沿同一方向(逆时针)平滑旋转：
-    // 右切左(0°→-180°)经上方过渡，而不是顺时针经过下方(=滚动方向)，避免误以为切到滚动模式。
-    let target: number = base;
-    while (target > this.rotateAngle) {
-      target -= 360;
+  /** 底栏模式切换钮文案：显示点击后将进入的目标模式 */
+  private nextModeLabel(): string {
+    if (this.readerMode === 'scroll') {
+      return '翻页模式';
     }
-    return target;
+    if (this.readerMode === 'paged_ltr') {
+      return '日漫模式';
+    }
+    return '滚动模式';
+  }
+
+  /**
+   * 滑杆跳页：滚动态直接 scrollToIndex；翻页态经 SwiperController.changeIndex 无动画直达，
+   * 落点同步与进度保存由 Swiper.onChange 统一上报，此处仅即时刷新页码显示。
+   */
+  private seekTo(page: number): void {
+    if (page < 0 || page >= this.totalImages || page === this.currentVisibleIndex) {
+      return;
+    }
+    if (this.isPagedMode) {
+      this.swiperController.changeIndex(this.isRtl ? (this.totalImages - 1 - page) : page, false);
+      this.currentVisibleIndex = page;
+    } else {
+      this.currentVisibleIndex = page;
+      this.listScroller.scrollToIndex(page, false, ScrollAlign.START);
+      this.loadPixelMap(page);
+      this.preloadNearbyPixelMaps(page);
+      this.scheduleSavePosition(page);
+    }
   }
 
   /**
@@ -668,6 +683,136 @@ struct ImageViewerPage {
     }
   }
 
+  /** 顶栏：圆形返回钮 + 章节名 + 章节进度（玻璃圆角卡片，参考 Cimoc 阅读器顶栏） */
+  @Builder
+  private topBar() {
+    Row({ space: 12 }) {
+      Row() {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(18)
+          .fontColor(['#FFFFFF'])
+      }
+      .width(40)
+      .height(40)
+      .justifyContent(FlexAlign.Center)
+      .borderRadius(20)
+      .backgroundColor('#33FFFFFF')
+      .onClick(() => this.onBack())
+
+      Text(this.titleText.length > 0 ? this.titleText : this.albumName)
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#FFFFFF')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+
+      if (this.chapters.length > 1) {
+        Text(`${this.currentChapterIndex + 1}/${this.chapters.length}章`)
+          .fontSize(12)
+          .fontColor('#99FFFFFF')
+      }
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: this.topSafeHeight + 8, bottom: 8 })
+    .backgroundColor('#99000000')
+    .borderRadius({ bottomLeft: 20, bottomRight: 20 })
+    .backgroundBlurStyle(BlurStyle.Thin)
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ y: -32 }))
+      .animation({ duration: 250, curve: Curve.EaseInOut }))
+  }
+
+  /** 底栏：页码滑杆（拖动实时跳页）+ 三等宽操作位（玻璃圆角卡片，参考 Cimoc 阅读器底栏） */
+  @Builder
+  private bottomBar() {
+    Column({ space: 12 }) {
+      Row({ space: 10 }) {
+        Text(`${this.currentVisibleIndex + 1}`)
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .width(34)
+          .textAlign(TextAlign.End)
+        Slider({
+          value: this.currentVisibleIndex + 1,
+          min: 1,
+          max: Math.max(this.totalImages, 1),
+          step: 1,
+          // 日漫(RTL)模式滑条反向：滑条方向与翻页方向一致
+          reverse: this.isRtl
+        })
+          .selectedColor('#FF5A5F')
+          .blockColor('#FF5A5F')
+          .trackColor('#33FFFFFF')
+          .trackThickness(3)
+          .layoutWeight(1)
+          .onChange((value: number) => {
+            this.seekTo(Math.max(0, Math.round(value) - 1));
+          })
+        Text(`${this.totalImages}`)
+          .fontSize(13)
+          .fontColor('#99FFFFFF')
+          .width(34)
+          .textAlign(TextAlign.Start)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 10 }) {
+        Row({ space: 6 }) {
+          SymbolGlyph($r('sys.symbol.chevron_left'))
+            .fontSize(14)
+            .fontColor([this.hasPrevChapter ? '#FFFFFF' : '#66FFFFFF'])
+          Text('上一章')
+            .fontSize(13)
+            .fontColor(this.hasPrevChapter ? '#FFFFFF' : '#66FFFFFF')
+        }
+        .height(40)
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(20)
+        .backgroundColor(this.hasPrevChapter ? '#14FFFFFF' : '#0DFFFFFF')
+        .onClick(() => this.goPrevChapter())
+
+        Text(this.nextModeLabel())
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .textAlign(TextAlign.Center)
+          .height(40)
+          .layoutWeight(1)
+          .borderRadius(20)
+          .backgroundColor('#14FFFFFF')
+          .onClick(() => this.cycleReaderMode())
+
+        Row({ space: 6 }) {
+          Text('下一章')
+            .fontSize(13)
+            .fontColor(this.hasNextChapter ? '#FFFFFF' : '#66FFFFFF')
+          SymbolGlyph($r('sys.symbol.chevron_right'))
+            .fontSize(14)
+            .fontColor([this.hasNextChapter ? '#FFFFFF' : '#66FFFFFF'])
+        }
+        .height(40)
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+        .borderRadius(20)
+        .backgroundColor(this.hasNextChapter ? '#14FFFFFF' : '#0DFFFFFF')
+        .onClick(() => this.goNextChapter())
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 12, bottom: this.bottomSafeHeight + 14 })
+    .backgroundColor('#99000000')
+    .borderRadius({ topLeft: 20, topRight: 20 })
+    .backgroundBlurStyle(BlurStyle.Thin)
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ y: 48 }))
+      .animation({ duration: 250, curve: Curve.EaseInOut }))
+  }
+
   build() {
     NavDestination() {
     Stack({ alignContent: Alignment.TopStart }) {
@@ -772,6 +917,12 @@ struct ImageViewerPage {
                 this.scheduleSavePosition(start);
               }
             })
+            .onReachEnd(() => {
+              // 滚到底不自动切章：唤起工具栏由用户决定去向（参考 Cimoc 阅读器）
+              if (!this.showControls) {
+                this.toggleControls();
+              }
+            })
             .width('100%')
             .height('100%')
             .nestedScroll({
@@ -814,86 +965,18 @@ struct ImageViewerPage {
         })
         .onClick(() => this.toggleControls())
 
-        // ── 悬浮顶部工具栏 ──
+        // ── 悬浮工具栏：顶/底玻璃圆角卡片同步显隐；中段透传点击(收起)与捏合缩放 ──
         if (this.showControls) {
-          Row() {
-            // 返回：40×40 标准点击体（裸 SymbolGlyph 字形宽仅约 13vp，不达 24vp 规范）
-            Stack() {
-              SymbolGlyph($r('sys.symbol.chevron_left'))
-                .fontSize(24)
-                .fontColor(['#FFFFFF'])
-            }
-            .width(40)
-            .height(40)
-            .onClick(() => this.onBack())
-
-            Text(`第${this.currentChapterIndex + 1}章 - ${this.titleText}`)
-              .fontSize(16)
-              .fontWeight(FontWeight.Medium)
-              .fontColor('#FFFFFF')
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Column() {
+            this.topBar()
+            Blank()
               .layoutWeight(1)
-              .margin({ left: 8, right: 8 })
-
-            SymbolGlyph($r('sys.symbol.chevron_left'))
-              .fontSize(24)
-              .fontColor(['#00000000'])
+              .hitTestBehavior(HitTestMode.None)
+            this.bottomBar()
           }
           .width('100%')
-          .padding({ left: 12, right: 12, top: this.topSafeHeight + 4, bottom: 4 })
-          .backgroundColor('rgba(0,0,0,0.5)')
-          .backdropBlur(20)
-
-          // ── 悬浮底部工具栏 ──
-          Row() {
-            Button(this.hasPrevChapter ? '上一章' : '已是第一章')
-              .fontSize(14)
-              .fontColor(this.hasPrevChapter ? '#FFFFFF' : '#666666')
-              .backgroundColor(this.hasPrevChapter ? 'rgba(255,90,95,0.9)' : 'rgba(100,100,100,0.5)')
-              .borderRadius(18)
-              .width(100)
-              .height(36)
-              .enabled(this.hasPrevChapter)
-              .onClick(() => this.goPrevChapter())
-
-            Text(`${this.currentVisibleIndex + 1} / ${this.totalImages}`)
-              .fontSize(13)
-              .fontColor('#AAAAAA')
-              .layoutWeight(1)
-              .textAlign(TextAlign.Center)
-
-            Button({ type: ButtonType.Normal }) {
-              SymbolGlyph($r('sys.symbol.arrow_down'))
-                .fontSize(22)
-                .fontColor(['#FFFFFF'])
-                // 基础箭头指向正下(0°)，按当前模式旋转到对应方向；属性动画使切换方向时平滑旋转
-                .rotate({ angle: this.rotateAngle })
-                .animation({ duration: 300, curve: Curve.EaseOut })
-            }
-              .backgroundColor('rgba(100,100,100,0.5)')
-              .borderRadius(18)
-              .width(44)
-              .height(36)
-              .onClick(() => this.cycleReaderMode())
-
-            Button(this.hasNextChapter ? '下一章' : '已是最后一章')
-              .fontSize(14)
-              .fontColor(this.hasNextChapter ? '#FFFFFF' : '#666666')
-              .backgroundColor(this.hasNextChapter ? 'rgba(255,90,95,0.9)' : 'rgba(100,100,100,0.5)')
-              .borderRadius(18)
-              .width(100)
-              .height(36)
-              .enabled(this.hasNextChapter)
-              .onClick(() => this.goNextChapter())
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 8, bottom: this.bottomSafeHeight + 28 })
-          .backgroundColor('rgba(0,0,0,0.5)')
-          .backdropBlur(20)
-          .justifyContent(FlexAlign.SpaceBetween)
-          .position({ x: 0, y: '100%' })
-          .translate({ y: '-100%' })
+          .height('100%')
+          .hitTestBehavior(HitTestMode.None)
         }
       }
     }
