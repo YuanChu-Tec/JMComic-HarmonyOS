@@ -1,7 +1,4 @@
 import { display, uiMaterial } from '@kit.ArkUI';
-import { common } from '@kit.AbilityKit';
-import { preferences } from '@kit.ArkData';
-import { fileIo } from '@kit.CoreFileKit';
 import { ApiService } from '../network/ApiService';
 import { AlbumViewModel, JmPromoteSection, SearchResultData, IAlbumViewModelJSON,
   CommentInfo, CommentPageData, parseCommentRaw,
@@ -23,7 +20,7 @@ import {
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { CommentItemComponent } from '../common/CommentItem';
 import { DeviceUtils } from 'common';
-import { ThemeSetting } from '../common/ThemeSetting';
+import { AccountManager } from '../common/AccountManager';
 import { JmAlbumCard } from './JmAlbumCard';
 import { navPush } from '../common/NavHelper';
 import { AlbumDetailParams, SectionMoreParams } from '../common/RouteParams';
@@ -231,6 +228,7 @@ struct ProfilePage {
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @StorageProp('isLoggedIn') @Watch('onLoginStateChanged') isLoggedIn: boolean = false;
+  @StorageProp('activeUsername') @Watch('onActiveUserChanged') activeUsername: string = '';
   @State favAlbums: AlbumViewModel[] = [];
   @State favFolders: FavoriteFolderItem[] = [];
   @State favCurrentFolderId: string = '0';
@@ -246,30 +244,74 @@ struct ProfilePage {
   @State watchIsLoading: boolean = false;
   @State watchCurrentPage: number = 1;
   @State watchHasMore: boolean = true;
+  // 历史管理态：长按进入，复选框多选，底部胶囊承载删除/取消
+  @State watchSelectMode: boolean = false;
+  @State watchSelectedIds: Set<string> = new Set<string>();
+  @State isDeleting: boolean = false;
   private tabsController: TabsController = new TabsController();
   private outerScroller: Scroller = new Scroller();
   private apiService: ApiService = ApiService.getInstance();
+  private loadedUsername: string = '';
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
 
   aboutToAppear(): void {
     AppStorage.setOrCreate('isLoggedIn', this.apiService.isLoggedIn());
-    // 直接检查登录状态，避免onAppear时机问题
-    if (this.apiService.isLoggedIn()) {
-      this.favNeedLoad = true;
-      this.loadFavorites();
-      this.loadWatchCount();
-      this.loadWatchHistory();
+    // 按当前会话用户加载收藏/历史（多账号切换时按用户去重刷新）
+    this.ensureLoadedForUser();
+  }
+
+  /** 组件销毁兜底：管理态若未退出，停掉握姿监听防泄漏 */
+  aboutToDisappear(): void {
+    this.exitWatchSelectMode();
+  }
+
+  /** 当isLoggedIn变化时（自动登录完成/退出登录），加载或清空用户数据 */
+  onLoginStateChanged(): void {
+    if (this.isLoggedIn) {
+      this.ensureLoadedForUser();
+    } else {
+      // 登出时若处于历史管理态，对称停掉握姿监听
+      this.exitWatchSelectMode();
+      this.loadedUsername = '';
+      this.resetUserData();
     }
   }
 
-  /** 当isLoggedIn变化时（如自动登录完成），触发收藏加载 */
-  onLoginStateChanged(): void {
-    if (this.isLoggedIn && !this.favNeedLoad) {
-      this.favNeedLoad = true;
-      this.loadFavorites();
-      this.loadWatchCount();
-      this.loadWatchHistory();
+  /** 活跃账号变化（切换/新增账号）时刷新收藏/历史 */
+  onActiveUserChanged(): void {
+    if (this.isLoggedIn) {
+      this.ensureLoadedForUser();
     }
+  }
+
+  /** 同一账号仅加载一次；账号变更时重置列表并重新加载 */
+  private ensureLoadedForUser(): void {
+    let username = this.apiService.getUserSession().username;
+    if (!username || this.loadedUsername === username) return;
+    this.loadedUsername = username;
+    // 账号切换前退出管理态：防旧账号选中集残留导致跨账号误删
+    this.exitWatchSelectMode();
+    this.resetUserData();
+    this.favNeedLoad = true;
+    this.loadFavorites();
+    this.loadWatchCount();
+    this.loadWatchHistory();
+  }
+
+  private resetUserData(): void {
+    this.favAlbums = [];
+    this.favFolders = [];
+    this.favCurrentFolderId = '0';
+    this.favCurrentPage = 1;
+    this.favHasMore = true;
+    this.favTotal = 0;
+    this.favNeedLoad = false;
+    this.favLoadFailed = false;
+    this.watchAlbums = [];
+    this.watchTotal = 0;
+    this.watchCurrentPage = 1;
+    this.watchHasMore = true;
+    this.watchLoadFailed = false;
   }
 
   async loadWatchCount(): Promise<void> {
@@ -292,46 +334,19 @@ struct ProfilePage {
     }
   }
 
-  onLogout(): void {
-    this.apiService.logout();
-    this.isLoggedIn = false;
-    this.favAlbums = [];
-    this.favTotal = 0;
-    this.favNeedLoad = false;
+  /** 进入账号管理页（切换/添加账号、退出登录） */
+  onOpenAccountManage(): void {
+    navPush('AccountManagePage');
   }
 
-  onClearCache(): void {
-    try {
-      let context = getContext() as common.UIAbilityContext;
-      let dirs = [context.cacheDir, context.filesDir];
-      for (let dir of dirs) {
-        this.deleteDirRecursive(dir);
-      }
-      // Toast 统一走 UIContext 形态（开发规范 §5.5，禁模块级 promptAction 直呼）
-      this.getUIContext().getPromptAction().showToast({ message: '缓存已清理', duration: 2000 });
-    } catch (e) {
-      console.error('[Index] clear cache error:', JSON.stringify(e));
-      this.getUIContext().getPromptAction().showToast({ message: '清理失败', duration: 2000 });
-    }
+  /** 进入设置页（黑白模式、清理缓存等） */
+  onOpenSettings(): void {
+    navPush('SettingsPage');
   }
 
-  private deleteDirRecursive(dirPath: string): void {
-    try {
-      if (!fileIo.accessSync(dirPath)) return;
-      let names = fileIo.listFileSync(dirPath);
-      for (let name of names) {
-        let fullPath = dirPath + '/' + name;
-        let stat = fileIo.statSync(fullPath);
-        if (stat.isDirectory()) {
-          this.deleteDirRecursive(fullPath);
-          fileIo.rmdirSync(fullPath);
-        } else {
-          fileIo.unlinkSync(fullPath);
-        }
-      }
-    } catch (e) {
-      console.warn(`[Index] deleteDir ${dirPath} error:`, JSON.stringify(e));
-    }
+  /** 进入下载管理页（后台下载队列与导出压缩包） */
+  onOpenDownloads(): void {
+    navPush('DownloadPage');
   }
 
   async loadFavorites(): Promise<void> {
@@ -420,6 +435,157 @@ struct ProfilePage {
     this.loadWatchHistory();
   }
 
+  // ─── 历史管理态（长按多选删除） ───
+
+  /** 长按进入历史管理态，并自动选中长按项 */
+  enterWatchSelectMode(albumId: number): void {
+    if (this.watchSelectMode) return;
+    this.watchSelectMode = true;
+    this.watchSelectedIds = new Set<string>([String(albumId)]);
+  }
+
+  /** 退出管理态：清选中 */
+  exitWatchSelectMode(): void {
+    if (!this.watchSelectMode) return;
+    this.watchSelectMode = false;
+    this.watchSelectedIds = new Set<string>();
+  }
+
+  /** 管理态下点卡片：切换选中（重新赋值 Set 确保触发刷新） */
+  toggleWatchSelected(albumId: number): void {
+    let key = String(albumId);
+    let next = new Set<string>(this.watchSelectedIds);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    this.watchSelectedIds = next;
+  }
+
+  /** 管理态胶囊层：全屏包装（Transparent 不拦空白区点击），胶囊悬浮于 HdsTabs 上方居中 */
+  @Builder
+  watchGripCapsuleLayer() {
+    Stack() {
+      Row() {
+        this.watchCapsuleButton($r('sys.symbol.trash'), '删除', '#FF5A5F',
+          (): void => { this.onWatchDeleteClick(); })
+        Divider()
+          .vertical(true)
+          .strokeWidth(0.5)
+          .height(30)
+          .color($r('sys.color.comp_divider'))
+        this.watchCapsuleButton($r('sys.symbol.xmark'), '取消', $r('app.color.text_primary'),
+          (): void => { this.exitWatchSelectMode(); })
+      }
+      .padding({ left: 6, right: 6, top: 8, bottom: 8 })
+      .borderRadius(34)
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .backgroundColor('#33000000')
+      // 删除请求进行中禁用整颗胶囊，防并发第二轮删除/中途退出
+      .enabled(!this.isDeleting)
+      .opacity(this.isDeleting ? 0.5 : 1)
+      // 吸收胶囊缝隙（分隔线/内边距）点击，防穿透误触下层列表
+      .onClick(() => {})
+      // 「光在胶囊内」：顶缘白光泽渐隐 + 发丝描边，静态属性
+      .linearGradient({
+        angle: 180,
+        colors: [['#1FFFFFFF', 0], ['#00FFFFFF', 0.4]]
+      })
+      .border({ width: 0.5, color: '#1AFFFFFF' })
+      // 居中（Stack Bottom 对齐默认水平居中），上抬 HdsTabs 悬浮栏总占用 + 8vp 间隔
+      .offset({ y: -92 })
+      // 出现/退出转场：淡入并自底部上滑
+      .transition(TransitionEffect.OPACITY
+        .combine(TransitionEffect.translate({ y: 60 }))
+        .animation({ duration: 250, curve: Curve.EaseInOut }))
+    }
+    .width('100%')
+    .height('100%')
+    .alignContent(Alignment.Bottom)
+    .hitTestBehavior(HitTestMode.Transparent)
+  }
+
+  @Builder
+  watchCapsuleButton(icon: Resource, label: string, color: ResourceColor, action: () => void) {
+    Column() {
+      SymbolGlyph(icon)
+        .fontSize(20)
+        .fontColor([color])
+      Text(label)
+        .fontSize(11)
+        .fontColor(color)
+        .margin({ top: 2 })
+    }
+    .width(60)
+    .height(48)
+    .justifyContent(FlexAlign.Center)
+    .onClick(() => action())
+  }
+
+  /** 确认弹窗（统一走 UIContext 形态）：返回是否点击了确认键 */
+  private async confirmDialog(title: string, message: string, confirmText: string): Promise<boolean> {
+    try {
+      let result = await this.getUIContext().getPromptAction().showDialog({
+        title: title,
+        message: message,
+        buttons: [
+          { text: '取消', color: '#999999' },
+          { text: confirmText, color: '#FF5A5F' }
+        ]
+      });
+      return result.index === 1;
+    } catch (err) {
+      console.warn('[ProfilePage] dialog dismissed:', JSON.stringify(err));
+      return false;
+    }
+  }
+
+  /** 胶囊删除钮：确认后逐条调删除接口；部分失败时保留管理态与剩余选中 */
+  async onWatchDeleteClick(): Promise<void> {
+    if (this.isDeleting) return;
+    if (this.watchSelectedIds.size === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '请先选择要删除的记录', duration: 2000 });
+      return;
+    }
+    let count = this.watchSelectedIds.size;
+    let ok = await this.confirmDialog('删除观看记录', `确定删除选中的 ${count} 条观看记录吗？删除后不可恢复。`, '删除');
+    if (!ok) return;
+
+    // 快照待删集合：循环/过滤全程基于快照，不读实时选中态（防循环中被取消导致失真）
+    let targets: string[] = Array.from(this.watchSelectedIds);
+    this.isDeleting = true;
+    let failed = new Set<string>();
+    for (let id of targets) {
+      try {
+        await this.apiService.deleteWatchRecord(id);
+      } catch (err) {
+        console.error('[ProfilePage] deleteWatchRecord error:', JSON.stringify(err));
+        failed.add(id);
+      }
+    }
+    this.isDeleting = false;
+
+    // 从列表移除删除成功的项，删除失败的保留（判断基于 targets 快照）
+    this.watchAlbums = this.watchAlbums.filter((a: AlbumViewModel) => {
+      let key = String(a.id);
+      return targets.indexOf(key) === -1 || failed.has(key);
+    });
+    this.watchTotal = this.watchAlbums.length;
+
+    if (failed.size === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: `已删除 ${count} 条观看记录`, duration: 2000 });
+      this.exitWatchSelectMode();
+    } else {
+      this.getUIContext().getPromptAction().showToast({
+        message: `${count - failed.size} 条已删除，${failed.size} 条删除失败`,
+        duration: 2000
+      });
+      // 仅保留失败项的选中态，可重试
+      this.watchSelectedIds = new Set<string>(failed);
+    }
+  }
+
   buildAvatarUrl(): string {
     let photo = this.apiService.getUserSession().photo;
     if (!photo) return '';
@@ -437,75 +603,60 @@ struct ProfilePage {
         if (this.isLoggedIn) {
           // ── 已登录状态 ──
 
-          // 用户头像和信息
-          Column() {
+          // 账号信息栏（紧凑）：头像居左，昵称/等级纵向排列并与头像居中对齐，右缘箭头；整行点击进入账号管理
+          Row() {
             if (this.buildAvatarUrl()) {
               Image(this.buildAvatarUrl())
-                .width(80)
-                .height(80)
-                .borderRadius(40)
+                .width(52)
+                .height(52)
+                .borderRadius(26)
                 .objectFit(ImageFit.Cover)
                 .backgroundColor($r('app.color.bg_secondary'))
-                .margin({ top: 24, bottom: 12 })
             } else {
               Image($r('app.media.ic_default_avatar'))
-                .width(80)
-                .height(80)
-                .borderRadius(40)
+                .width(52)
+                .height(52)
+                .borderRadius(26)
                 .objectFit(ImageFit.Cover)
                 .backgroundColor($r('app.color.bg_secondary'))
-                .margin({ top: 24, bottom: 12 })
             }
 
-            Text(this.apiService.getUserSession().username)
-              .fontSize(20)
-              .fontWeight(FontWeight.Bold)
-              .fontColor($r('app.color.text_primary'))
+            Column() {
+              Text(this.apiService.getUserSession().username)
+                .fontSize(17)
+                .fontWeight(FontWeight.Bold)
+                .fontColor($r('app.color.text_primary'))
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-            Text(`Lv.${this.apiService.getUserSession().level} · ${this.apiService.getUserSession().levelName}`)
-              .fontSize(13)
-              .fontColor($r('app.color.text_tertiary'))
-              .margin({ top: 4 })
+              Text(`Lv.${this.apiService.getUserSession().level} · ${this.apiService.getUserSession().levelName}`)
+                .fontSize(12)
+                .fontColor($r('app.color.text_tertiary'))
+                .margin({ top: 3 })
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .margin({ left: 12 })
+            .layoutWeight(1)
+
+            SymbolGlyph($r('sys.symbol.chevron_right'))
+              .fontSize(18)
+              .fontColor([$r('app.color.text_disabled')])
           }
           .width('100%')
-          .alignItems(HorizontalAlign.Center)
-          .padding({ top: 16, bottom: 16 })
+          .alignItems(VerticalAlign.Center)
+          .padding({ left: 16, right: 16, top: 14, bottom: 14 })
           .backgroundColor($r('app.color.bg_card'))
           .borderRadius(12)
           .margin({ top: 16 })
+          .onClick(() => this.onOpenAccountManage())
 
-          // 操作按钮
-          Row({ space: 12 }) {
-            // 退出按钮
-            Button({ type: ButtonType.Normal }) {
-              Text('退出登录')
-                .fontSize(15)
-                .fontColor($r('app.color.brand'))
-            }
-            .backgroundColor($r('app.color.brand_bg'))
-            .borderRadius(22)
-            .layoutWeight(1)
-            .height(44)
-            .onClick(() => this.onLogout())
+          // ── 下载管理入口 ──
+          this.DownloadEntryCard()
 
-            // 清理缓存（登录态）
-            Button({ type: ButtonType.Normal }) {
-              Text('清理缓存')
-                .fontSize(15)
-                .fontColor($r('app.color.text_secondary'))
-            }
-            .backgroundColor($r('app.color.bg_page'))
-            .borderRadius(22)
-            .layoutWeight(1)
-            .height(44)
-            .onClick(() => this.onClearCache())
-          }
-          .width('80%')
-          .justifyContent(FlexAlign.Center)
-          .margin({ top: 24 })
-
-          // ── 主题设置（黑白模式） ──
-          ThemeSetting()
+          // ── 设置入口 ──
+          this.SettingsEntryCard()
 
           // ── 收藏/历史列表 ──
           Tabs({ controller: this.tabsController, barPosition: BarPosition.Start }) {
@@ -581,7 +732,7 @@ struct ProfilePage {
                       Grid() {
                         ForEach(this.favAlbums, (album: AlbumViewModel) => {
                           GridItem() {
-                            this.FavAlbumCard(album)
+                            this.FavAlbumCard(album, false, false)
                           }
                           .onClick(() => this.onAlbumClick(album))
                         }, (album: AlbumViewModel) => `${album.id}`)
@@ -636,7 +787,8 @@ struct ProfilePage {
 
             // 历史 Tab
             TabContent() {
-              List() {
+              Stack() {
+                List() {
                 ListItem() {
                   Column() {
                     // 历史列表
@@ -675,10 +827,22 @@ struct ProfilePage {
                       Grid() {
                         ForEach(this.watchAlbums, (album: AlbumViewModel) => {
                           GridItem() {
-                            this.FavAlbumCard(album)
+                            this.FavAlbumCard(album, this.watchSelectMode, this.watchSelectedIds.has(String(album.id)))
                           }
-                          .onClick(() => this.onAlbumClick(album))
-                        }, (album: AlbumViewModel) => `${album.id}`)
+                          .onClick(() => {
+                            // 管理态下整个卡片区域（含复选框）都是选择热区；常态下进详情
+                            if (this.watchSelectMode) {
+                              this.toggleWatchSelected(album.id);
+                            } else {
+                              this.onAlbumClick(album);
+                            }
+                          })
+                          .gesture(LongPressGesture({ repeat: false, duration: 500 })
+                            .onAction(() => this.enterWatchSelectMode(album.id)))
+                        }, (album: AlbumViewModel) =>
+                          // 管理态/选中态编入键值：@Builder 按值传参不随 @State 刷新，
+                          // 靠键值变化触发 GridItem 重建（下载管理页同款解法）
+                          `${album.id}|${this.watchSelectMode ? 1 : 0}|${this.watchSelectedIds.has(String(album.id)) ? 1 : 0}`)
                       }
                       .columnsTemplate(this.isTablet ? '1fr 1fr 1fr 1fr' : '1fr 1fr')
                       .columnsGap(10)
@@ -715,6 +879,7 @@ struct ProfilePage {
                 }
               }
               .width('100%')
+              .height('100%')
               .nestedScroll({
                 scrollForward: NestedScrollMode.PARENT_FIRST,
                 scrollBackward: NestedScrollMode.SELF_FIRST
@@ -722,6 +887,22 @@ struct ProfilePage {
               .onReachEnd(() => {
                 if (this.watchHasMore && !this.watchIsLoading) {
                   this.loadMoreWatch();
+                }
+              })
+
+                // 管理态胶囊层：条件渲染保证退出管理态时热区一并移除；
+                // 包装层 Transparent 不拦截空白区点击，落到下层列表
+                if (this.watchSelectMode) {
+                  this.watchGripCapsuleLayer()
+                }
+              }
+              .width('100%')
+              .height('100%')
+              .alignContent(Alignment.Bottom)
+              // 个人中心被切走/滚出视口即退出管理态（覆盖外层 HdsTabs 切换场景）
+              .onVisibleAreaChange([0.0, 0.1], (isVisible: boolean) => {
+                if (!isVisible) {
+                  this.exitWatchSelectMode();
                 }
               })
             }
@@ -737,6 +918,10 @@ struct ProfilePage {
               this.favNeedLoad = true;
               this.loadFavorites();
             }
+          })
+          .onChange(() => {
+            // 离开历史 Tab 时退出管理态（胶囊随 TabContent 隐藏收尾）
+            this.exitWatchSelectMode();
           })
         } else {
           // ── 未登录状态 ──
@@ -771,21 +956,11 @@ struct ProfilePage {
           .margin({ top: 16 })
           .onClick(() => this.onLogin())
 
-          // 清理缓存（未登录态）
-          Button({ type: ButtonType.Normal }) {
-            Text('清理缓存')
-              .fontSize(15)
-              .fontColor($r('app.color.text_secondary'))
-          }
-          .backgroundColor($r('app.color.bg_page'))
-          .borderRadius(22)
-          .width('80%')
-          .height(44)
-          .margin({ top: 16 })
-          .onClick(() => this.onClearCache())
+          // ── 下载管理入口 ──
+          this.DownloadEntryCard()
 
-          // ── 主题设置（黑白模式） ──
-          ThemeSetting()
+          // ── 设置入口 ──
+          this.SettingsEntryCard()
         }
       }
       .width('100%')
@@ -797,16 +972,110 @@ struct ProfilePage {
     .backgroundColor($r('app.color.bg_page'))
   }
 
+  /** 下载管理入口卡片：与设置入口同款式，置于设置上方（下载功能无需登录） */
   @Builder
-  FavAlbumCard(album: AlbumViewModel) {
+  DownloadEntryCard() {
+    Row() {
+      SymbolGlyph($r('sys.symbol.download'))
+        .fontSize(20)
+        .fontColor([$r('app.color.text_secondary')])
+
+      Text('下载管理')
+        .fontSize(15)
+        .fontColor($r('app.color.text_primary'))
+        .margin({ left: 10 })
+        .layoutWeight(1)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(18)
+        .fontColor([$r('app.color.text_disabled')])
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+    .backgroundColor($r('app.color.bg_card'))
+    .borderRadius(12)
+    .margin({ top: 12 })
+    .onClick(() => this.onOpenDownloads())
+  }
+
+  /** 设置入口卡片：黑白模式、清理缓存等设置项已统一迁入设置页 */
+  @Builder
+  SettingsEntryCard() {
+    Row() {
+      SymbolGlyph($r('sys.symbol.gearshape'))
+        .fontSize(20)
+        .fontColor([$r('app.color.text_secondary')])
+
+      Text('设置')
+        .fontSize(15)
+        .fontColor($r('app.color.text_primary'))
+        .margin({ left: 10 })
+        .layoutWeight(1)
+
+      SymbolGlyph($r('sys.symbol.chevron_right'))
+        .fontSize(18)
+        .fontColor([$r('app.color.text_disabled')])
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+    .backgroundColor($r('app.color.bg_card'))
+    .borderRadius(12)
+    .margin({ top: 12 })
+    .onClick(() => this.onOpenSettings())
+  }
+
+  /**
+   * 收藏/历史共用卡片。
+   * 历史管理态下 inSelectMode=true：选中时整封面叠半透明黑遮罩 + 居中白勾
+   * （视觉与下载管理页选择态同款），左上角复选框标识管理态与选中状态；
+   * 收藏 Tab 固定传 (false, false)，不进管理态。
+   */
+  @Builder
+  FavAlbumCard(album: AlbumViewModel, inSelectMode: boolean, selected: boolean) {
     Column() {
-      Image(album.coverUrl)
-        .width('100%')
-        .aspectRatio(0.72)
-        .objectFit(ImageFit.Cover)
-        .borderRadius({ topLeft: 8, topRight: 8 })
-        .backgroundColor($r('app.color.bg_secondary'))
-        .constraintSize({ maxWidth: this.isTablet ? 200 : 180 })
+      // 封面容器定尺寸（与封面同比例）：遮罩层的百分比才有确定基准，否则会撑爆 Stack
+      Stack({ alignContent: Alignment.TopStart }) {
+        Image(album.coverUrl)
+          .width('100%')
+          .aspectRatio(0.72)
+          .objectFit(ImageFit.Cover)
+          .borderRadius({ topLeft: 8, topRight: 8 })
+          .backgroundColor($r('app.color.bg_secondary'))
+
+        if (inSelectMode && selected) {
+          // 选中态：整封面遮罩 + 居中白勾（下载管理页同款）
+          Column() {
+            SymbolGlyph($r('sys.symbol.checkmark_circle'))
+              .fontSize(26)
+              .fontColor([$r('app.color.text_on_accent')])
+          }
+          .width('100%')
+          .height('100%')
+          .borderRadius({ topLeft: 8, topRight: 8 })
+          .backgroundColor('#8C000000')
+          .justifyContent(FlexAlign.Center)
+        }
+
+        if (inSelectMode) {
+          Row() {
+            SymbolGlyph($r('sys.symbol.checkmark'))
+              .fontSize(12)
+              .fontColor([$r('app.color.text_on_accent')])
+              .opacity(selected ? 1 : 0)
+          }
+          .width(22)
+          .height(22)
+          .justifyContent(FlexAlign.Center)
+          .borderRadius(11)
+          .backgroundColor(selected ? $r('app.color.brand') : '#80000000')
+          .border({ width: 1.5, color: selected ? $r('app.color.brand') : '#E6FFFFFF' })
+          .margin({ left: 6, top: 6 })
+        }
+      }
+      .aspectRatio(0.72)
+      .constraintSize({ maxWidth: this.isTablet ? 200 : 180 })
 
       Column() {
         Text(album.name)
@@ -837,6 +1106,7 @@ struct ProfilePage {
     .width('100%')
     .backgroundColor($r('app.color.bg_card'))
     .borderRadius(8)
+    .border({ width: 2, color: selected ? $r('app.color.brand') : Color.Transparent })
     .shadow({
       radius: 4,
       color: $r('app.color.scrim'),
@@ -1524,14 +1794,16 @@ struct Index {
   async aboutToAppear(): Promise<void> {
     // 注册全局导航栈（须早于任何子组件的跳转调用）
     AppStorage.setOrCreate('navPathStack', this.pathStack);
-    // 自动登录：从 preferences 读取已保存的凭据
+    // 自动登录：多账号管理器取活跃账号的凭据
     try {
-      let prefs = await preferences.getPreferences(getContext(), 'JMComicUser');
-      let savedUser = prefs.getSync('username', '') as string;
-      let savedPass = prefs.getSync('password', '') as string;
-      if (savedUser && savedPass) {
-        console.info('[Index] 尝试自动登录, username=' + savedUser);
-        await this.apiService.login(savedUser, savedPass);
+      let accountManager = AccountManager.getInstance();
+      await accountManager.init();
+      let creds = accountManager.getActiveCredentials();
+      if (creds) {
+        console.info('[Index] 尝试自动登录, username=' + creds.username);
+        let session = await this.apiService.login(creds.username, creds.password);
+        // 回填头像/等级等信息到账号条目
+        await accountManager.recordLogin(creds.username, creds.password, session, true);
         console.info('[Index] 自动登录成功');
       }
     } catch (err) {
@@ -1619,7 +1891,7 @@ struct Index {
       .alignItems(VerticalAlign.Top)
     }
     .width('100%')
-    .padding({ left: 20, right: 20, top: 4, bottom: this.bottomSafeHeight + 16 })
+    .padding({ left: 20, right: 20, top: 8, bottom: this.bottomSafeHeight + 16 })
   }
 
   /**

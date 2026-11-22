@@ -39,6 +39,16 @@
       "name": "SectionMorePage",
       "pageSourceFile": "src/main/ets/pages/SectionMorePage.ets",
       "buildFunction": "SectionMorePageBuilder"
+    },
+    {
+      "name": "SettingsPage",
+      "pageSourceFile": "src/main/ets/pages/SettingsPage.ets",
+      "buildFunction": "SettingsPageBuilder"
+    },
+    {
+      "name": "AccountManagePage",
+      "pageSourceFile": "src/main/ets/pages/AccountManagePage.ets",
+      "buildFunction": "AccountManagePageBuilder"
     }
   ]
 }

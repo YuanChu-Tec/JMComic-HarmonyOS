@@ -551,6 +551,30 @@ export class ApiService {
   }
 
   /**
+   * 删除单条观看记录
+   *
+   * API: POST /watch_list，表单参数 id（官方 App watchListUpdate thunk 同款契约）
+   * 接口来源：官方客户端 v2.1.14 JS bundle 静态逆向（2026-11-22）
+   * 注意：接口一次只删一条，批量删除由调用方循环本方法
+   *
+   * @param albumId 作品ID（字符串形式，与列表项 id 对应）
+   */
+  async deleteWatchRecord(albumId: string): Promise<void> {
+    let ts = CryptoUtils.timestamp();
+    let headers = await this.buildTokenHeaders(ts);
+
+    let params: Record<string, string> = {};
+    params['id'] = albumId;
+    let body = ApiService.buildFormBody(params);
+
+    let respStr = await this.requestApi(API_WATCH_LIST, 'POST', body, headers);
+    let resp = await this.decryptResponse<WatchListData>(respStr, ts);
+    if (resp.code !== 200) {
+      throw new Error(resp.message || '删除观看记录失败');
+    }
+  }
+
+  /**
    * 管理收藏夹（新建/重命名/移动/删除文件夹）
    *
    * API: POST /favorite_folder
