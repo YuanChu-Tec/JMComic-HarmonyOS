@@ -72,6 +72,9 @@ export default class EntryAbility extends UIAbility {
           return;
         }
         hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+        // 全局 UIContext：必须在 UIContent 加载完成后才能获取（window.getUIContext 依赖已加载的 UIContent，
+        // 过早调用抛 1300002）；供服务层（如下载完成提醒）以 UIContext 形态弹 Toast（开发规范 §5.5，禁模块级 promptAction）
+        AppStorage.setOrCreate('globalUIContext', windowStage.getMainWindowSync().getUIContext());
         // 页面加载完成后再检查更新，避免弹窗时 UI 上下文还未就绪
         this.checkAppUpdate(windowStage);
       });

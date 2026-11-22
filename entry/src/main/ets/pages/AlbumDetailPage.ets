@@ -1,12 +1,10 @@
-import { common, wantAgent } from '@kit.AbilityKit';
+import { common } from '@kit.AbilityKit';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
-import { pasteboard, zlib } from '@kit.BasicServicesKit';
-import { notificationManager } from '@kit.NotificationKit';
-import { picker, fileIo } from '@kit.CoreFileKit';
+import { pasteboard } from '@kit.BasicServicesKit';
 import { ApiService } from '../network/ApiService';
+import { DownloadService, ChapterDownloadInfo } from '../network/DownloadService';
 import { CacheManager } from '../common/CacheManager';
-import { DownloadManager, ChapterDownloadInfo } from '../common/DownloadManager';
 import {
   JmAlbumDetail,
   JmPhotoInfo,
@@ -45,10 +43,9 @@ struct AlbumDetailPage {
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @StorageProp('isLoggedIn') isLoggedIn: boolean = false;
   @State hasRead: boolean = false;
-  @State isDownloading: boolean = false;
+  /** 首次使用下载功能时的引导半模态 */
+  @State showDownloadGuideSheet: boolean = false;
   private lastReadChapterId: string = '';
-  private downloadNotifId: number = 0;
-  private downloadMgr: DownloadManager | null = null;
   private albumId: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private cacheManager: CacheManager | null = null;
@@ -217,245 +214,34 @@ struct AlbumDetailPage {
     return author ? [author] : [];
   }
 
+  /** 加入下载队列：整本所有章节；首次使用时弹引导说明「后台下载 + 手动导出保存」流程 */
   async onDownload(): Promise<void> {
     if (this.chapters.length === 0) {
       this.showToast('暂无章节可下载');
       return;
     }
-
-    let context = getContext() as common.UIAbilityContext;
-    let baseDir = `${context.filesDir}/JMComic`;
-
-    this.downloadNotifId = this.albumId + 10000;
-
     try {
-      // 初始化 wantAgent（点击通知打开应用）
-      await this.ensureWantAgent();
-      // 发布初始通知
-      this.publishNotif(0, 100, '准备下载...');
-
-      this.isDownloading = true;
-
+      let svc = await DownloadService.getInstance();
       let chapterList: ChapterDownloadInfo[] = this.chapters.map((ch): ChapterDownloadInfo => {
         return { photoId: ch.photoId, photoName: ch.name, scrambleId: ch.scrambleId } as ChapterDownloadInfo;
       });
-
-      let mgr = await DownloadManager.getInstance();
-      this.downloadMgr = mgr;
-      await mgr.downloadAlbum(
-        this.albumName,
-        chapterList,
-        baseDir,
-        (current: number, total: number, chapterName: string) => {
-          console.info(`[AlbumDetailPage] download progress: ${current}/${total}`);
-          this.publishNotif(current, total, chapterName);
-        },
-        async (success: number, failed: number) => {
-          this.isDownloading = false;
-          this.publishDoneNotif(success, failed);
-          let msg = failed > 0
-            ? `下载完成：${success}张成功，${failed}张失败`
-            : `下载完成：共${success}张`;
-          this.showToast(msg, 5000);
-
-          // 下载完成后打包为 zip 并导出到公共目录
-          await this.exportAsZip(context, baseDir);
-        },
-        (msg: string) => {
-          this.isDownloading = false;
-          this.publishErrorNotif(msg);
-          this.showToast(`下载失败：${msg}`, 3000);
-        }
-      );
-    } catch (e) {
-      this.isDownloading = false;
-      console.error('[AlbumDetailPage] download error:', JSON.stringify(e));
-      this.showToast('下载失败');
-    }
-  }
-
-  /**
-   * 收集目录下所有文件（递归）
-   */
-  private async collectFiles(dirPath: string): Promise<string[]> {
-    let result: string[] = [];
-    let names = await fileIo.listFile(dirPath);
-    for (let name of names) {
-      let fullPath = dirPath + '/' + name;
-      let stat = fileIo.statSync(fullPath);
-      if (stat.isDirectory()) {
-        let sub = await this.collectFiles(fullPath);
-        result.push(...sub);
+      let added = svc.addAlbumTasks(this.albumId, this.albumName, chapterList);
+      if (added === 0) {
+        this.showToast('全部章节已在下载队列中', 2500);
       } else {
-        result.push(fullPath);
-      }
-    }
-    return result;
-  }
-
-  /**
-   * 打包为 zip 并通过 DocumentViewPicker 保存到公共目录
-   */
-  private async exportAsZip(context: common.UIAbilityContext, baseDir: string): Promise<void> {
-    try {
-      let safeName = this.albumName.replace(/[\/\\:*?"<>|]/g, '_').trim();
-      let albumDir = `${baseDir}/${safeName}`;
-
-      if (!fileIo.accessSync(albumDir)) {
-        return; // 目录不存在，跳过
+        this.showToast(`已加入 ${added} 个章节到下载队列`, 2500);
       }
 
-      let allFiles = await this.collectFiles(albumDir);
-      if (allFiles.length === 0) {
+      let cache = await CacheManager.getInstance();
+      if (!cache.getDownloadGuideShown()) {
+        cache.setDownloadGuideShown();
+        this.showDownloadGuideSheet = true;
         return;
       }
-
-      let zipPath = `${baseDir}/${safeName}.zip`;
-      // 删除旧 zip
-      if (fileIo.accessSync(zipPath)) {
-        fileIo.unlinkSync(zipPath);
-      }
-
-      // 使用 @ohos.zlib.compressFiles 打包多文件为 zip
-      await zlib.compressFiles(allFiles, zipPath, {
-        level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION
-      });
-
-      // 用 DocumentViewPicker 保存 zip 到公共目录
-      let documentPicker = new picker.DocumentViewPicker(context);
-      let uris = await documentPicker.save({
-        newFileNames: [`${safeName}.zip`]
-      });
-
-      if (uris && uris.length > 0) {
-        // 复制到用户选择的目录
-        fileIo.copyFileSync(zipPath, uris[0]);
-        this.showToast(`压缩包已保存到 Download/${safeName}.zip (${allFiles.length}张)`, 5000);
-      }
-
-      // 清理临时 zip
-      try { fileIo.unlinkSync(zipPath); } catch (_e) {}
+      navPush('DownloadPage');
     } catch (e) {
-      console.error('[AlbumDetailPage] zip export error:', JSON.stringify(e));
-      try {
-        this.showToast(`打包完成，但导出失败：${JSON.stringify(e)}`, 3000);
-      } catch (_e) {}
-    }
-  }
-
-  onCancelDownload(): void {
-    if (this.downloadMgr) {
-      this.downloadMgr.cancelDownload();
-      this.downloadMgr = null;
-    }
-    this.isDownloading = false;
-    this.showToast('已取消下载');
-  }
-
-  private wantAgentObj: object | null = null;
-
-  /** 初始化 wantAgent（点击通知打开应用） */
-  private async ensureWantAgent(): Promise<object> {
-    if (this.wantAgentObj) {
-      return this.wantAgentObj;
-    }
-    let context = getContext() as common.UIAbilityContext;
-    let abilityName = context.abilityInfo.name;
-    let info: wantAgent.WantAgentInfo = {
-      wants: [{
-        bundleName: context.abilityInfo.bundleName,
-        abilityName: abilityName
-      }],
-      operationType: wantAgent.OperationType.START_ABILITY,
-      requestCode: 0,
-      wantAgentFlags: [wantAgent.WantAgentFlags.CONSTANT_FLAG]
-    };
-    this.wantAgentObj = await wantAgent.getWantAgent(info);
-    return this.wantAgentObj;
-  }
-
-  private publishNotif(current: number, total: number, chapterName: string): void {
-    let percent = total > 0 ? Math.round(current / total * 100) : 0;
-    try {
-      let template: notificationManager.NotificationTemplate = {
-        name: 'downloadTemplate',
-        data: {
-          progressValue: current,
-          progressMaxValue: total,
-          isProgressIndeterminate: false
-        }
-      };
-      let notifReq: notificationManager.NotificationRequest = {
-        id: this.downloadNotifId,
-        notificationSlotType: notificationManager.SlotType.CONTENT_INFORMATION,
-        template: template,
-        content: {
-          notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
-          normal: {
-            title: `JMComic - ${this.albumName}`,
-            text: chapterName,
-            additionalText: `${percent}% (${current}/${total})`
-          }
-        },
-        wantAgent: this.wantAgentObj as Record<string, Object>
-      };
-      notificationManager.publish(notifReq).catch(() => {});
-    } catch (e) {
-      console.error('[AlbumDetailPage] publish notif error:', JSON.stringify(e));
-    }
-  }
-
-  private publishDoneNotif(success: number, failed: number): void {
-    try {
-      let msg = failed > 0
-        ? `下载完成：${success}张成功，${failed}张失败`
-        : `下载完成：共${success}张`;
-      let template: notificationManager.NotificationTemplate = {
-        name: 'downloadTemplate',
-        data: {
-          progressValue: success,
-          progressMaxValue: success + failed,
-          isProgressIndeterminate: false
-        }
-      };
-      let notifReq: notificationManager.NotificationRequest = {
-        id: this.downloadNotifId,
-        notificationSlotType: notificationManager.SlotType.CONTENT_INFORMATION,
-        template: template,
-        content: {
-          notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
-          normal: {
-            title: 'JMComic - 下载完成',
-            text: msg,
-            additionalText: '100%'
-          }
-        },
-        wantAgent: this.wantAgentObj as Record<string, Object>
-      };
-      notificationManager.publish(notifReq).catch(() => {});
-    } catch (e) {
-      console.error('[AlbumDetailPage] publish done notif error:', JSON.stringify(e));
-    }
-  }
-
-  private publishErrorNotif(msg: string): void {
-    try {
-      let notifReq: notificationManager.NotificationRequest = {
-        id: this.downloadNotifId,
-        notificationSlotType: notificationManager.SlotType.CONTENT_INFORMATION,
-        content: {
-          notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
-          normal: {
-            title: 'JMComic - 下载失败',
-            text: msg,
-            additionalText: '失败'
-          }
-        },
-        wantAgent: this.wantAgentObj as Record<string, Object>
-      };
-      notificationManager.publish(notifReq).catch(() => {});
-    } catch (e) {
-      console.error('[AlbumDetailPage] publish error notif:', JSON.stringify(e));
+      console.error('[AlbumDetailPage] download error:', JSON.stringify(e));
+      this.showToast('加入下载队列失败');
     }
   }
 
@@ -493,6 +279,81 @@ struct AlbumDetailPage {
       return author.join(', ');
     }
     return author || '';
+  }
+
+  /** 首次下载引导行 */
+  @Builder
+  GuideRow(text: string) {
+    Row() {
+      Circle()
+        .width(5)
+        .height(5)
+        .fill($r('app.color.brand'))
+        .margin({ top: 9 })
+
+      Text(text)
+        .fontSize(14)
+        .fontColor($r('app.color.text_secondary'))
+        .lineHeight(22)
+        .margin({ left: 10 })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
+    .margin({ bottom: 10 })
+  }
+
+  /** 首次下载引导半模态：说明「后台下载 + 手动到下载管理页导出保存」流程 */
+  @Builder
+  DownloadGuideSheetBuilder() {
+    Column() {
+      Text('下载说明')
+        .fontSize(18)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+
+      Column() {
+        this.GuideRow('章节已加入后台下载队列，可继续浏览其他漫画，进度在通知栏与下载管理页展示')
+        this.GuideRow('全部章节下载完成后会收到系统通知提醒')
+        this.GuideRow('保存压缩包需到「下载管理」页点击「导出压缩包」，自行选择保存位置（导出不会自动进行）')
+      }
+      .width('100%')
+      .margin({ top: 14 })
+      .alignItems(HorizontalAlign.Start)
+
+      Row() {
+        Button('知道了')
+          .height(40)
+          .fontSize(14)
+          .fontColor($r('app.color.text_secondary'))
+          .backgroundColor($r('app.color.bg_secondary'))
+          .borderRadius(20)
+          .padding({ left: 20, right: 20 })
+          .onClick(() => {
+            this.showDownloadGuideSheet = false;
+          })
+
+        Button('前往下载管理页')
+          .height(40)
+          .fontSize(14)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_on_accent'))
+          .backgroundColor($r('app.color.brand'))
+          .borderRadius(20)
+          .padding({ left: 20, right: 20 })
+          .margin({ left: 12 })
+          .onClick(() => {
+            this.showDownloadGuideSheet = false;
+            navPush('DownloadPage');
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.End)
+      .margin({ top: 20 })
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 24, bottom: 24 + this.bottomSafeHeight })
+    .alignItems(HorizontalAlign.Start)
   }
 
   build() {
@@ -752,7 +613,7 @@ struct AlbumDetailPage {
               .alignItems(HorizontalAlign.Start)
             }
 
-            // ── 开始阅读 + 评论 按钮 ──
+            // ── 开始阅读 + 评论 + 下载 按钮 ──
             if (this.chapters.length > 0) {
               Row() {
                 Button(this.hasRead && this.chapters.length > 1 ? '继续阅读' : '开始阅读')
@@ -790,6 +651,18 @@ struct AlbumDetailPage {
                     navPush('AlbumCommentPage',
                       { albumId: this.albumId, albumName: this.albumName } as CommentPageParams);
                   })
+
+                Button('下载')
+                  .height(48)
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('app.color.brand'))
+                  .backgroundColor($r('app.color.bg_card'))
+                  .borderRadius(24)
+                  .border({ width: 1, color: $r('app.color.brand') })
+                  .padding({ left: 24, right: 24 })
+                  .margin({ left: 12 })
+                  .onClick(() => this.onDownload())
               }
               .width('100%')
               .padding({ left: 16, right: 16, top: 16 })
@@ -968,6 +841,12 @@ struct AlbumDetailPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.bg_card'))
+    .bindSheet(this.showDownloadGuideSheet!!, this.DownloadGuideSheetBuilder(), {
+      height: SheetSize.FIT_CONTENT,
+      dragBar: false,
+      showClose: true,
+      preferType: SheetType.BOTTOM
+    })
     }
     .hideTitleBar(true)
     .onReady((ctx: NavDestinationContext) => {

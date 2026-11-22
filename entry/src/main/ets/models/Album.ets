@@ -425,7 +425,8 @@ export enum DownloadStatus {
   ERROR = 'error',
 }
 
-/** 单个下载任务（一个章节） */
+/** 单个下载任务（一个章节）；@Observed 供下载管理页 @ObjectLink 绑定，进度/状态变化实时刷新行 UI */
+@Observed
 export class DownloadTask {
   taskId: string = '';             // 唯一ID (albumId_photoId)
   albumId: number = 0;
