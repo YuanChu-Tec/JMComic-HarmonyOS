@@ -611,7 +611,9 @@ struct DownloadPage {
             task: task,
             onPauseClick: (taskId: string): void => this.onPause(taskId),
             onResumeClick: (taskId: string): void => this.onResume(taskId),
-            onDeleteClick: (taskId: string): void => this.onDeleteChapter(taskId)
+            onDeleteClick: (taskId: string): void => {
+              this.onDeleteChapter(taskId);
+            }
           })
         }, (task: DownloadTask) => task.taskId)
       }
@@ -641,7 +643,13 @@ struct DownloadPage {
     this.downloadService?.resumeTask(taskId);
   }
 
-  onDeleteChapter(taskId: string): void {
+  /** 删除章节任务记录（弹窗确认；已下载文件保留，仍随专辑导出） */
+  async onDeleteChapter(taskId: string): Promise<void> {
+    let task = this.downloadService?.getTasks().find((t: DownloadTask): boolean => t.taskId === taskId) ?? null;
+    let chapterName = task?.chapterName || '该章节';
+    let ok = await this.confirmDialog('删除章节任务',
+      `将删除「${chapterName}」的下载任务记录，已下载的图片文件保留（仍会随专辑导出）。`, '删除');
+    if (!ok) return;
     this.downloadService?.removeTask(taskId);
   }
 }
