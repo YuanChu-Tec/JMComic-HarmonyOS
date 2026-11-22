@@ -1,8 +1,7 @@
-import { preferences } from '@kit.ArkData';
 import { ApiService } from '../network/ApiService';
+import { UserSession } from '../models/Album';
+import { AccountManager } from '../common/AccountManager';
 import { navPop } from '../common/NavHelper';
-
-const PREF_NAME = 'JMComicUser';
 
 /**
  * 登录页面
@@ -31,33 +30,25 @@ struct LoginPage {
 
   async loadSavedCredentials(): Promise<void> {
     try {
-      let prefs = await preferences.getPreferences(getContext(), PREF_NAME);
-      let savedUser = prefs.getSync('username', '') as string;
-      let savedPass = prefs.getSync('password', '') as string;
-      let savedSave = prefs.getSync('savePassword', true) as boolean;
-      if (savedUser) {
-        this.username = savedUser;
+      // 预填活跃账号的凭据（多账号管理器持久化数据）
+      let accountManager = AccountManager.getInstance();
+      await accountManager.init();
+      let active = accountManager.getActiveAccount();
+      if (active) {
+        this.username = active.username;
+        this.password = active.password;
+        this.savePassword = !!active.password;
       }
-      if (savedPass) {
-        this.password = savedPass;
-      }
-      this.savePassword = savedSave;
     } catch (err) {
       // preferences not available, use defaults
     }
   }
 
-  async saveCredentials(): Promise<void> {
+  async saveCredentials(session: UserSession): Promise<void> {
     try {
-      let prefs = await preferences.getPreferences(getContext(), PREF_NAME);
-      prefs.putSync('username', this.username);
-      if (this.savePassword) {
-        prefs.putSync('password', this.password);
-      } else {
-        prefs.putSync('password', '');
-      }
-      prefs.putSync('savePassword', this.savePassword);
-      prefs.flushSync();
+      // 登记到多账号列表并置为活跃账号（凭据明文存储，与既有行为一致）
+      await AccountManager.getInstance()
+        .recordLogin(this.username.trim(), this.password, session, this.savePassword);
     } catch (err) {
       console.error('saveCredentials error:', JSON.stringify(err));
     }
@@ -79,8 +70,8 @@ struct LoginPage {
     try {
       let session = await this.apiService.login(this.username.trim(), this.password);
 
-      // 保存凭据
-      await this.saveCredentials();
+      // 保存凭据（登记进多账号列表）
+      await this.saveCredentials(session);
 
       // 登录成功，立即返回上一页（Index页面的个人中心会显示用户信息）
       console.info('[LoginPage] 登录成功');

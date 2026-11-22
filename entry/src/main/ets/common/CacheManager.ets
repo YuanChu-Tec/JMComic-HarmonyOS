@@ -192,6 +192,21 @@ export class CacheManager {
     this.prefs?.flushSync();
   }
 
+  /**
+   * 清理与登录用户绑定的缓存（收藏列表等 fav_ 前缀键）
+   * 多账号切换/退出登录时调用，避免展示上一账号的数据
+   */
+  clearUserScopedCache(): void {
+    if (!this.prefs) return;
+    let all = this.prefs.getAllSync() as Record<string, preferences.ValueType>;
+    for (let key of Object.keys(all)) {
+      if (key.startsWith('fav_')) {
+        this.prefs.deleteSync(key);
+      }
+    }
+    this.prefs.flushSync();
+  }
+
   // ─── 用户偏好 ───
 
   saveLastCategory(category: string): void {
@@ -228,6 +243,44 @@ export class CacheManager {
 
   loadDownloadTasks(): string {
     return this.getString('download_tasks', '[]');
+  }
+
+  // ─── 下载功能引导 ───
+
+  /** 首次使用下载功能时是否已展示过引导（后台下载 + 手动到下载管理页导出保存的流程说明） */
+  getDownloadGuideShown(): boolean {
+    return this.getString('download_guide_shown') === '1';
+  }
+
+  setDownloadGuideShown(): void {
+    this.put('download_guide_shown', '1');
+  }
+
+  // ─── 专辑导出状态 ───
+
+  /** 专辑是否已导出过压缩包（手动导出成功后标记；向专辑新增章节任务时重置为未导出） */
+  isAlbumExported(albumId: number): boolean {
+    return this.getString(`exported_${albumId}`) === '1';
+  }
+
+  setAlbumExported(albumId: number, exported: boolean): void {
+    if (exported) {
+      this.put(`exported_${albumId}`, '1');
+    } else {
+      this.prefs?.deleteSync(`exported_${albumId}`);
+      this.prefs?.flushSync();
+    }
+  }
+
+  // ─── 导出设置 ───
+
+  /** 导出成功后是否自动删除本地下载文件（仅保留下载记录），默认关闭 */
+  isAutoDeleteAfterExport(): boolean {
+    return this.getString('auto_delete_after_export') === '1';
+  }
+
+  setAutoDeleteAfterExport(enabled: boolean): void {
+    this.put('auto_delete_after_export', enabled ? '1' : '0');
   }
 
   // ─── 版本更新忽略 ───
