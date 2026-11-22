@@ -164,11 +164,12 @@ struct LoginPage {
           .onChange((value: string) => this.password = value)
           .margin({ top: 12 })
 
-        // 记住密码（整行可点：点击行内任意处切换开关；Toggle 仅作状态展示，
-        // 不单独挂 onChange，避免点击开关时事件冒泡与行点击双通道互相抵消）
+        // 记住密码（整行可点：点击行内任意处切换开关；Toggle 纯状态展示并禁其自身命中
+        // ——实测 Toggle 会吞掉点击不冒泡到行 onClick，直接点开关只翻视觉不写状态）
         Row() {
           Toggle({ type: ToggleType.Switch, isOn: this.savePassword })
             .selectedColor($r('app.color.brand'))
+            .hitTestBehavior(HitTestMode.None)
 
           Text('记住密码')
             .fontSize(13)
