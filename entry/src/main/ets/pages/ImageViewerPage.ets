@@ -1,11 +1,8 @@
 import { image } from '@kit.ImageKit';
-import { http } from '@kit.NetworkKit';
 import { ApiService } from '../network/ApiService';
 import { CacheManager } from '../common/CacheManager';
-import { ImageDecodeUtils } from '../common/ImageDecodeUtils';
 import { ComicLibrary, LibraryContext } from '../common/ComicLibrary';
-import { APP_HEADERS_IMAGE } from '../common/Constants';
-import { JmImageInfo, PictureData } from '../models/Album';
+import { JmImageInfo, PictureData } from '../models/dto/ApiDto';
 import { navPop } from '../common/NavHelper';
 import { ImageViewerParams } from '../common/RouteParams';
 
@@ -77,6 +74,8 @@ struct ImageViewerPage {
   private library: ComicLibrary | null = null;
   // 当前章节上下文（阅读/下载/导出共用的图片仓库路径依据）
   private libraryCtx: LibraryContext | null = null;
+  // 服务器最新元数据里的图片 URL（按文件名索引，供新版本下载用）
+  private currentImageUrls: Map<string, string> = new Map<string, string>();
   private totalImages: number = 0;
   private scrollScroller: Scroller = new Scroller();
   private listScroller: Scroller = new Scroller();
@@ -128,72 +127,80 @@ struct ImageViewerPage {
   async loadImagesWithCache(): Promise<void> {
     this.isLoading = true;
     this.errorText = '';
+    let gen = this.chapterGeneration;
 
     try {
       this.cache = await CacheManager.getInstance();
-      // 读取用户上次选择的阅读模式（竖向滚动 / 横向翻页方向）
       let mode = this.cache.getReaderMode();
       this.readerMode = mode;
       this.isPagedMode = (mode !== 'scroll');
       this.isRtl = (mode === 'paged_rtl');
       this.library = await ComicLibrary.getInstance();
 
-      let cached = this.cache!.loadChapterData(this.photoId);
+      // ① 本地秒显：先用仓库当前版本的元数据构造列表，立即显示已缓存 PNG
+      let localCtx = this.library.getCurrentContext(this.photoId);
+      let localLoaded = false;
+      if (localCtx && localCtx.imgNames.length > 0) {
+        this.applyContext(localCtx, false);
+        localLoaded = true;
+        console.info(`[ImageViewer] local instant load: ${this.photoId}, cached=${this.library.cachedImageCount(localCtx)}/${localCtx.imgNames.length}`);
+      }
+
+      // ② 每次必请求服务器元数据（不再依赖 TTL 缓存）
       let data: PictureData | null = null;
-
-      if (cached) {
-        try {
-          data = JSON.parse(cached) as PictureData;
-          console.info(`[ImageViewer] loaded chapter data from cache: ${this.photoId}`);
-        } catch {
-          console.warn(`[ImageViewer] parse cached chapter data failed, fetching from API`);
-        }
-      }
-
-      if (!data) {
+      try {
         data = await this.apiService.getChapterPictures(this.photoId, this.scrambleId);
-        try {
-          this.cache!.saveChapterData(this.photoId, JSON.stringify(data));
-          console.info(`[ImageViewer] saved chapter data to cache: ${this.photoId}`);
-        } catch (e) {
-          console.warn(`[ImageViewer] save cache failed: ${JSON.stringify(e)}`);
+        // 元数据本体落盘（服务器返回的稳定内容）
+        this.cache.saveChapterData(this.photoId, JSON.stringify(data));
+      } catch (err) {
+        if (!localLoaded) {
+          // ArkTS 限制：不能把任意类型抛出去，统一包成 Error
+          throw err instanceof Error ? err : new Error(String(err));
         }
+        console.warn(`[ImageViewer] server meta fetch failed, continue with local: ${JSON.stringify(err)}`);
       }
 
-      if (data && data.pictures && data.pictures.images) {
-        this.images = data.pictures.images;
-        this.imageDataSource.reload(this.images);
-        this.totalImages = this.images.length;
+      if (gen !== this.chapterGeneration) return;
+      if (!data || !data.pictures || !data.pictures.images) {
+        this.isLoading = false;
+        return;
+      }
+
+      // ③ 用最新服务器元数据构造目标上下文
+      let imgNames: string[] = [];
+      for (let img of data.pictures.images) {
+        imgNames.push(img.img_name);
+      }
+      let freshScramble = data.pictures.scramble_id || this.scrambleId;
+      let targetCtx: LibraryContext = {
+        albumId: this.albumId,
+        albumName: this.albumName,
+        photoId: this.photoId,
+        chapterName: this.photoName || data.pictures.name || '',
+        scrambleId: freshScramble,
+        fingerprint: ComicLibrary.chapterFingerprint(freshScramble, imgNames),
+        imgNames: imgNames,
+      } as LibraryContext;
+
+      // 服务器最新 URL 入表，供预加载/降级下载使用（无论是否换版本）
+      for (let img of data.pictures.images) {
+        this.currentImageUrls.set(img.img_name, img.img_url || img.download_url);
+      }
+
+      let changed = this.library.isMetaChanged(targetCtx);
+
+      if (!changed && localLoaded) {
+        // 元数据未变：本地 PNG 继续用，无需重建，只更新标题等
         this.titleText = data.pictures.name || this.titleText;
-        if (data.pictures.scramble_id) {
-          this.scrambleId = data.pictures.scramble_id;
+        console.info(`[ImageViewer] meta unchanged, keep local images`);
+      } else {
+        // 元数据有变化（或本地尚无数据）：直接应用最新列表，
+        // 预加载器逐页 ensureImage —— 内容没变的页复用旧图，变了的页逐页原子替换，
+        // 整个过程中每一页都完整可读，不会出现整章空白。
+        if (changed) {
+          console.info(`[ImageViewer] meta changed: ${this.photoId}, replace page by page`);
         }
-        // 构造统一仓库上下文：阅读/下载/导出共用同一份路径与指纹
-        let imgNames: string[] = [];
-        for (let img of this.images) {
-          imgNames.push(img.img_name);
-        }
-        this.libraryCtx = {
-          albumId: this.albumId,
-          albumName: this.albumName,
-          photoId: this.photoId,
-          chapterName: this.photoName || data.pictures.name || '',
-          scrambleId: this.scrambleId,
-          fingerprint: ComicLibrary.chapterFingerprint(this.scrambleId, imgNames),
-          imgNames: imgNames,
-        } as LibraryContext;
-        // 初始化 PixelMap 数组
-        let arr: (image.PixelMap | null)[] = [];
-        for (let i = 0; i < this.totalImages; i++) {
-          arr.push(null);
-        }
-        this.decodedPixelMaps = arr;
-        // 启动后台预加载器
-        this.preloadIndex = 0;
-        this.preloadActive = true;
-        this.startPreloader();
-        // 恢复上次阅读位置
-        this.restoreReadPosition();
+        this.applyContext(targetCtx, true);
       }
     } catch (err) {
       let errMsg = err instanceof Error ? err.message : JSON.stringify(err);
@@ -203,6 +210,37 @@ struct ImageViewerPage {
       this.isLoading = false;
     }
     this.cache?.markChapterRead(this.albumId, this.photoId);
+  }
+
+  /**
+   * 把某个上下文应用到页面：构造图片占位列表 + 初始化 PixelMap 数组 + 预加载 + 恢复位置
+   * @param withUrls true=用真实 URL（新版本下载用），false=仅文件名（本地秒显用）
+   */
+  private applyContext(ctx: LibraryContext, withUrls: boolean): void {
+    let imgs: JmImageInfo[] = [];
+    for (let name of ctx.imgNames) {
+      imgs.push({
+        img_name: name,
+        img_url: withUrls ? this.currentImageUrls.get(name) || '' : '',
+        download_url: withUrls ? this.currentImageUrls.get(name) || '' : '',
+      } as JmImageInfo);
+    }
+    // URL 由服务器元数据统一填充到 currentImageUrls，预加载/降级时按文件名取用
+    this.images = imgs;
+    this.imageDataSource.reload(this.images);
+    this.totalImages = this.images.length;
+    this.libraryCtx = ctx;
+    this.scrambleId = ctx.scrambleId;
+
+    let arr: (image.PixelMap | null)[] = [];
+    for (let i = 0; i < this.totalImages; i++) {
+      arr.push(null);
+    }
+    this.decodedPixelMaps = arr;
+    this.preloadIndex = 0;
+    this.preloadActive = true;
+    this.startPreloader();
+    this.restoreReadPosition();
   }
 
   aboutToDisappear(): void {
@@ -481,6 +519,7 @@ struct ImageViewerPage {
     this.photoId = chapter.photoId;
     // 新章节数据尚未加载完成前清空上下文，避免命中上一章的仓库目录
     this.libraryCtx = null;
+    this.currentImageUrls.clear();
     this.photoName = chapter.photoName || '';
     this.titleText = this.photoName;
     this.currentChapterIndex = index;
@@ -514,10 +553,8 @@ struct ImageViewerPage {
     while (this.preloadIndex < this.totalImages) {
       let idx = this.preloadIndex;
       this.preloadIndex++;
-      // 已有磁盘缓存则跳过
-      if (this.library && this.libraryCtx && this.library.hasImage(this.libraryCtx, idx)) {
-        continue;
-      }
+      // 注意：这里不能用 hasImage 跳过——换版时旧图仍在盘上，
+      // 是否需要替换由 ensureImage 按「页」判断（比对文件名与解码参数）
       this.preloadInFlight++;
       this.preloadToDisk(idx);
       return;
@@ -525,68 +562,32 @@ struct ImageViewerPage {
     // 全部完成
     if (this.preloadInFlight <= 0) {
       this.preloadActive = false;
+      // 整章处理完毕：提交元数据（记录这组 PNG 已对应最新内容）
+      if (this.library && this.libraryCtx) {
+        this.library.commitChapter(this.libraryCtx);
+      }
       console.info('[Preloader] all images preloaded');
     }
   }
 
   private async preloadToDisk(index: number): Promise<void> {
-    let gen = this.chapterGeneration;
     try {
-      // 再次检查磁盘缓存（可能其他任务已写入）
-      if (this.library && this.libraryCtx && this.library.hasImage(this.libraryCtx, index)) {
+      if (!this.library || !this.libraryCtx) return;
+
+      let name = this.images[index].img_name;
+      let url = this.currentImageUrls.get(name) || '';
+      if (!url || url.length === 0) {
+        // 本地秒显场景下还没有服务器 URL；此时磁盘上的图就是唯一可用版本，直接留用
         return;
       }
-
-      let img = this.images[index];
-      let url = img.img_url || img.download_url;
-      if (!url || url.length === 0) return;
-
-      // 1. 下载原始字节
-      let request = http.createHttp();
-      let response = await request.request(url, {
-        method: http.RequestMethod.GET,
-        expectDataType: http.HttpDataType.ARRAY_BUFFER,
-        header: APP_HEADERS_IMAGE,
-        connectTimeout: 15000,
-        readTimeout: 30000,
-      });
-      if (gen !== this.chapterGeneration) { request.destroy(); return; }
-      if (response.responseCode !== 200) { request.destroy(); return; }
-
-      let arrayBuffer = response.result as ArrayBuffer;
-      request.destroy();
-
-      // 2. 创建 PixelMap
-      let imageSource = image.createImageSource(arrayBuffer);
-      let decodeOpts: image.DecodingOptions = {
-        desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
-      };
-      let pixelMap = await imageSource.createPixelMap(decodeOpts);
-      imageSource.release();
-      if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
-
-      // 3. 拼图解码
-      let imgNameNoExt = img.img_name.replace(/\.[^.]+$/, '');
-      let num = await ImageDecodeUtils.getSegmentationNum(
-        this.scrambleId,
-        parseInt(this.photoId),
-        imgNameNoExt
-      );
-      if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
-
-      if (num > 0) {
-        pixelMap = await ImageDecodeUtils.decodeImage(pixelMap, num);
-      }
-      if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
-
-      // 4. 写入统一仓库（阅读/下载/导出共用这一份 PNG）
-      if (this.library && this.libraryCtx) {
-        await this.library.saveImage(this.libraryCtx, index, pixelMap);
-      }
-
-      // 5. 释放内存（磁盘已有备份）
-      pixelMap.release();
-      console.info(`[Preloader] saved ${index + 1}/${this.totalImages}`);
+      let img: JmImageInfo = {
+        img_name: name,
+        img_url: url,
+        download_url: url,
+      } as JmImageInfo;
+      // ensureImage 内部判断：该页内容没变且已落盘 → 直接复用；变了 → 下载并原子覆盖
+      await this.library.ensureImage(this.libraryCtx, index, img);
+      console.info(`[Preloader] ensured ${index + 1}/${this.totalImages}`);
     } catch (err) {
       console.error(`[Preloader] error at ${index}: ${JSON.stringify(err)}`);
     } finally {
@@ -629,51 +630,29 @@ struct ImageViewerPage {
   }
 
   private async fallbackLoadFromNetwork(index: number, gen: number): Promise<void> {
-    let img = this.images[index];
-    let url = img.img_url || img.download_url;
+    if (!this.library || !this.libraryCtx) return;
+    let name = this.images[index].img_name;
+    let url = this.currentImageUrls.get(name) || '';
     if (!url || url.length === 0) return;
 
     console.info(`[ImageViewer] fallback network load: ${index + 1}/${this.totalImages}`);
-
-    let request = http.createHttp();
-    let response = await request.request(url, {
-      method: http.RequestMethod.GET,
-      expectDataType: http.HttpDataType.ARRAY_BUFFER,
-      header: APP_HEADERS_IMAGE,
-      connectTimeout: 15000,
-      readTimeout: 30000,
-    });
-    if (gen !== this.chapterGeneration) { request.destroy(); return; }
-    if (response.responseCode !== 200) { request.destroy(); return; }
-
-    let arrayBuffer = response.result as ArrayBuffer;
-    request.destroy();
-
-    let imageSource = image.createImageSource(arrayBuffer);
-    let pixelMap = await imageSource.createPixelMap({
-      desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
-    });
-    imageSource.release();
-    if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
-
-    let imgNameNoExt = img.img_name.replace(/\.[^.]+$/, '');
-    let num = await ImageDecodeUtils.getSegmentationNum(
-      this.scrambleId,
-      parseInt(this.photoId),
-      imgNameNoExt
-    );
-    if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
-
-    if (num > 0) {
-      pixelMap = await ImageDecodeUtils.decodeImage(pixelMap, num);
+    let img: JmImageInfo = {
+      img_name: name,
+      img_url: url,
+      download_url: url,
+    } as JmImageInfo;
+    // ensureImage 内部完成下载+解码+落盘，并发去重
+    await this.library.ensureImage(this.libraryCtx, index, img);
+    if (gen !== this.chapterGeneration) return;
+    // 从仓库读回显示
+    let pm = await this.library.loadPixelMap(this.libraryCtx, index);
+    if (gen !== this.chapterGeneration) {
+      if (pm) pm.release();
+      return;
     }
-    if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
-
-    // 写入统一仓库 + 显示（pixelMap 随后要显示，不能 release，但必须等写入完成再交给 UI）
-    if (this.library && this.libraryCtx) {
-      await this.library.saveImage(this.libraryCtx, index, pixelMap);
+    if (pm) {
+      this.decodedPixelMaps.splice(index, 1, pm);
     }
-    this.decodedPixelMaps.splice(index, 1, pixelMap);
   }
 
   // ═══════════════════════════════════════════════════════

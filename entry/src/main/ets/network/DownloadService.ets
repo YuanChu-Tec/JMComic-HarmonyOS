@@ -1,12 +1,7 @@
 import { UIContext } from '@kit.ArkUI';
 import { ApiService } from './ApiService';
-import {
-  DownloadTask,
-  DownloadStatus,
-  JmImageInfo,
-  IDownloadTaskJSON,
-  PictureData,
-} from '../models/Album';
+import { DownloadTask, DownloadStatus, IDownloadTaskJSON } from '../models/Album';
+import { JmImageInfo, PictureData } from '../models/dto/ApiDto';
 import { CacheManager } from '../common/CacheManager';
 import { ComicLibrary, LibraryContext } from '../common/ComicLibrary';
 import { DownloadNotifier } from '../common/DownloadNotifier';
@@ -156,9 +151,9 @@ export class DownloadService {
     this.library?.removeAlbum(albumId, albumName);
   }
 
-  /** 仅删除整本漫画的仓库图片，保留任务记录（「导出成功后自动删除下载缓存」设置开启时由导出流程调用） */
+  /** 仅删除整本漫画的仓库图片，保留实体与任务记录（「导出成功后自动删除下载缓存」设置开启时调用） */
   deleteAlbumFiles(albumId: number, albumName: string): void {
-    this.library?.removeAlbum(albumId, albumName);
+    this.library?.removeAlbumImages(albumId, albumName);
   }
 
   /** 暂停任务（当前正在下载的图片完成后停下，进度已持久化） */
@@ -294,8 +289,9 @@ export class DownloadService {
       }
     }
 
-    // 全部完成后登记为手动下载：永不自动清理
+    // 全部完成后：提交章节元数据（标记这组 PNG 已对应最新内容）+ 登记手动下载（永不自动清理）
     if (task.completedImages === task.totalImages && this.library) {
+      this.library.commitChapter(ctx);
       this.library.markDownloaded(ctx);
     }
 
@@ -307,11 +303,8 @@ export class DownloadService {
   }
 
   /**
-   * 下载单张图片：优先复制已解码缓存 → 网络拉取 → scramble 解码 → PNG 落盘 → 回写缓存
-   */
-  /**
    * 下载单张图片：只委托统一仓库。
-   * 仓库内部完成「查本地 → 旧缓存迁移 → 网络拉取 → scramble 还原 → PNG 落盘 → 记录清单」，
+   * 仓库内部完成「查本地 → 网络拉取 → scramble 还原 → PNG 落盘 → 记录清单」，
    * 同一图片与阅读/导出共用唯一物理副本，且并发请求自动合并。
    */
   private async downloadImage(ctx: LibraryContext, index: number, img: JmImageInfo): Promise<void> {

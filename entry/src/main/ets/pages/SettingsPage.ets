@@ -3,6 +3,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { ThemeSetting } from '../common/ThemeSetting';
 import { CacheManager } from '../common/CacheManager';
 import { ComicLibrary } from '../common/ComicLibrary';
+import { ComicRealtimeStore } from '../models/ComicAlbumRealtime';
 import { navPop } from '../common/NavHelper';
 
 /**
@@ -122,6 +123,8 @@ struct SettingsPage {
     try {
       let context = getContext() as common.UIAbilityContext;
       let freed = await this.clearDirChildren(context.cacheDir);
+      // cacheDir 已清空，实时数据仓库的内存映射同步失效
+      ComicRealtimeStore.getInstance().then(store => store.invalidateAll());
       this.getUIContext().getPromptAction().showToast({
         message: `已清理 ${this.formatSize(freed)}`,
         duration: 2000

@@ -1,10 +1,8 @@
 import { display } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { ApiService } from '../network/ApiService';
-import {
-  JmAlbumInfo, RespJmAlbumInfo, respToJmAlbumInfo,
-  JmPromoteSection,
-} from '../models/Album';
+import { JmAlbumInfo, respToJmAlbumInfo } from '../models/Album';
+import { RespJmAlbumInfo, JmPromoteSection } from '../models/dto/ApiDto';
 import { JmAlbumCard } from './JmAlbumCard';
 import { SECTION_SOURCE_LATEST, SECTION_SOURCE_PROMOTE } from '../common/Constants';
 import { navPop } from '../common/NavHelper';

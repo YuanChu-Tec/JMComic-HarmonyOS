@@ -1,4 +1,4 @@
-import { RespJmAlbumInfo } from '../models/Album';
+import { RespJmAlbumInfo } from '../models/dto/ApiDto';
 
 /**
  * Navigation 路由参数集中定义（docs/Navigation路由规范.md §5：Object 传递、接收侧 as 收窄）。

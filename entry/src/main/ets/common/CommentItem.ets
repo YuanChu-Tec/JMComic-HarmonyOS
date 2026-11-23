@@ -1,7 +1,5 @@
 import { ApiService } from '../network/ApiService';
-import {
-  CommentInfo,
-} from '../models/Album';
+import { CommentInfo } from '../models/ComicAlbumRealtime';
 import { navPush } from './NavHelper';
 import { AlbumDetailParams } from './RouteParams';
 

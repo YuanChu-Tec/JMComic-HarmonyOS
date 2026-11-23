@@ -5,17 +5,10 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { ApiService } from '../network/ApiService';
 import { DownloadService, ChapterDownloadInfo } from '../network/DownloadService';
 import { CacheManager } from '../common/CacheManager';
-import {
-  JmAlbumDetail,
-  JmPhotoInfo,
-  PhotoViewModel,
-  JmTagInfo,
-  JmRelatedWork,
-  AlbumViewModel,
-  JmAlbumSeries,
-  CategoryBean,
-  FavoriteAlbumItem
-} from '../models/Album';
+import { PhotoViewModel, AlbumViewModel } from '../models/Album';
+import { JmAlbumDetail, JmPhotoInfo, JmTagInfo, JmRelatedWork,
+  JmAlbumSeries, CategoryBean, FavoriteAlbumItem,
+} from '../models/dto/ApiDto';
 import { navPush, navPop, navReplace } from '../common/NavHelper';
 import { AlbumDetailParams, ImageViewerParams, SearchPageParams, CommentPageParams } from '../common/RouteParams';
 

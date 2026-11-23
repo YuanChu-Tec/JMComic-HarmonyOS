@@ -36,15 +36,14 @@ import {
   JmImageInfo,
   FavoritePageData,
   FavoriteActionResult,
-  FavoriteFolderType,
   JmUserData,
-  UserSession,
   CommentPageData,
   CommentInfoRaw,
   SendCommentData,
   WatchListData,
   RespJmAlbumInfo,
-} from '../models/Album';
+} from '../models/dto/ApiDto';
+import { FavoriteFolderType, UserSession } from '../models/Album';
 
 /**
  * API 服务层
@@ -269,7 +268,8 @@ export class ApiService {
           throw new Error('网络连接超时，请检查网络后重试');
         }
       }
-      throw lastErr;
+      // ArkTS 受限 throw：只能抛 Error 实例
+      throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
     }
     throw new Error(`所有 API 域名请求均失败: ${path}`);
   }

@@ -1,9 +1,7 @@
 import { ApiService } from '../network/ApiService';
-import {
-  CommentInfo,
-  CommentPageData,
-  parseCommentRaw,
-} from '../models/Album';
+import { parseCommentRaw } from '../models/ComicAlbumRealtime';
+import { CommentPageData } from '../models/dto/ApiDto';
+import { CommentInfo } from '../models/ComicAlbumRealtime';
 import { CommentItemComponent } from '../common/CommentItem';
 import { navPop } from '../common/NavHelper';
 import { CommentPageParams } from '../common/RouteParams';

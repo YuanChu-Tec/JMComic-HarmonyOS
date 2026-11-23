@@ -105,23 +105,21 @@ export class ZipExporter {
     }
   }
 
-  /** 打包专辑目录为临时 zip（cacheDir/zip_export 下，唯一文件名防并发覆盖） */
+  /** 打包专辑当前版本图片为临时 zip（cacheDir/zip_export 下，唯一文件名防并发覆盖） */
   private static async buildAlbumZip(context: common.UIAbilityContext,
     albumId: number, albumName: string, zipFileName: string): Promise<string> {
-    let svc = await DownloadService.getInstance();
-    let albumDir = svc.getAlbumDir(albumId, albumName);
-    if (!fileIo.accessSync(albumDir)) {
-      throw new Error('专辑下载目录不存在');
-    }
-    let names = await fileIo.listFile(albumDir);
-    if (names.length === 0) {
-      throw new Error('专辑下载内容为空');
-    }
-
+    let library = await ComicLibrary.getInstance();
     let stageDir = `${context.cacheDir}/zip_export`;
     if (!fileIo.accessSync(stageDir)) {
       fileIo.mkdirSync(stageDir, true);
     }
+    // 从版本化仓库构建扁平 staging：{章节}/{序号}.png
+    let albumStage = `${stageDir}/stage_${albumId}_${zipFileName}`;
+    let chapters = await library.buildExportStage(albumId, albumName, albumStage);
+    if (chapters === 0) {
+      throw new Error('专辑下载内容为空');
+    }
+
     let zipPath = `${stageDir}/${zipFileName}`;
     if (fileIo.accessSync(zipPath)) {
       fileIo.unlinkSync(zipPath);
@@ -133,7 +131,8 @@ export class ZipExporter {
       level: zlib.CompressLevel.COMPRESS_LEVEL_NO_COMPRESSION
     };
     // 整目录打包：zip 内保留「章节名/序号.png」层级
-    await zlib.compressFile(albumDir, zipPath, opts);
+    await zlib.compressFile(albumStage, zipPath, opts);
+    await fileIo.rmdir(albumStage);
     return zipPath;
   }
 

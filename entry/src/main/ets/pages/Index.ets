@@ -1,12 +1,10 @@
 import { display, uiMaterial } from '@kit.ArkUI';
 import { ApiService } from '../network/ApiService';
-import { AlbumViewModel, JmPromoteSection, SearchResultData, IAlbumViewModelJSON,
-  CommentInfo, CommentPageData, parseCommentRaw,
-  COMMENT_MODE_ALL, COMMENT_MODE_MANHUA, COMMENT_MODE_CHAT, COMMENT_MODE_NAME_MAP,
-  FavoriteAlbumItem, FavoriteFolderItem,
-  RespJmAlbumInfo,
-  respToJmAlbumInfo,
-} from '../models/Album';
+import { AlbumViewModel, IAlbumViewModelJSON, respToJmAlbumInfo } from '../models/Album';
+import { parseCommentRaw } from '../models/ComicAlbumRealtime';
+import { JmPromoteSection, SearchResultData, CommentPageData,
+  FavoriteFolderItem, FavoriteAlbumItem, RespJmAlbumInfo,
+} from '../models/dto/ApiDto';
 import { CacheManager } from '../common/CacheManager';
 import {
   CATEGORY_ALL, CATEGORY_DOUJIN, CATEGORY_SINGLE, CATEGORY_SHORT,
@@ -22,6 +20,8 @@ import { CommentItemComponent } from '../common/CommentItem';
 import { DeviceUtils } from 'common';
 import { AccountManager } from '../common/AccountManager';
 import { ComicLibrary, CleanupRule } from '../common/ComicLibrary';
+import { CommentInfo, COMMENT_MODE_ALL, COMMENT_MODE_MANHUA, COMMENT_MODE_CHAT,
+  COMMENT_MODE_NAME_MAP } from '../models/ComicAlbumRealtime';
 import { JmAlbumCard } from './JmAlbumCard';
 import { navPush } from '../common/NavHelper';
 import { AlbumDetailParams, SectionMoreParams } from '../common/RouteParams';
