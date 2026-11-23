@@ -1838,7 +1838,8 @@ struct CategoryPage {
           // 结果只有一行时内容不足一屏，Scroll 会垂直居中，这里显式顶部对齐
           .align(Alignment.Top)
           .scrollBar(BarState.Off)
-          .padding({ top: this.topSafeHeight + 172 })
+          // 浮层底边在 topSafeHeight + 60 + 约 86（排序行 + 分类行），这里保持与首行的原间距
+          .padding({ top: this.topSafeHeight + 184 })
           .onReachEnd(() => this.loadMore())
           }
           .onRefreshing(() => {
@@ -1901,7 +1902,9 @@ struct CategoryPage {
         .scrollBar(BarState.Off)
         .height(52)
       }
-      .position({ x: 0, y: this.topSafeHeight + 48 })
+      // 顶边贴齐全局顶部栏底边：顶部栏 = topSafeHeight + 16(上内边距) + 40(按钮) + 4(下内边距) = +60，
+      // 原先写 +48 会向上钻进顶部栏 12vp
+      .position({ x: 0, y: this.topSafeHeight + 60 })
       .width('100%')
       .padding({ top: 4 })
       .backgroundColor($r('app.color.overlay_bg'))
