@@ -410,6 +410,9 @@ struct SectionMorePage {
           }
           .width('100%')
           .height('100%')
+          // 只有几项时内容不足一屏，Scroll 默认会把它垂直居中，这里显式顶部对齐；
+          // 不用 minHeight，避免 contentHeight 被撑到视口高导致 tryAutoLoad 判断失效
+          .align(Alignment.Top)
           .scrollBar(BarState.Off)
           .padding({ top: this.topSafeHeight + 56, bottom: this.bottomSafeHeight + 12 })
           .onAreaChange((_oldArea: Area, newArea: Area) => {

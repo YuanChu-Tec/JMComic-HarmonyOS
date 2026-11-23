@@ -309,6 +309,8 @@ struct AboutPage {
       }
       .width('100%')
       .layoutWeight(1)
+      // 内容固定就几块，一屏放得下时 Scroll 会垂直居中，这里显式顶部对齐
+      .align(Alignment.Top)
       .scrollBar(BarState.Off)
     }
     .width('100%')

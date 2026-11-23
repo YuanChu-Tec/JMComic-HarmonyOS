@@ -2,7 +2,7 @@
   "app": {
     "bundleName": "com.YuanChu.JMComic",
     "vendor": "example",
-    "versionCode": 1001000,
+    "versionCode": 1010000,
     "versionName": "1.1.0",
     "buildVersion": "1",
     "icon": "$media:layered_image",

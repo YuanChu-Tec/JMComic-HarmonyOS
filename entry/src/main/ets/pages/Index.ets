@@ -365,6 +365,8 @@ struct HomePage {
       }
       .width('100%')
       .height('100%')
+      // 内容不足一屏（空数据/加载失败）时顶部对齐，避免 Scroll 垂直居中
+      .align(Alignment.Top)
       .scrollBar(BarState.Off)
       .backgroundColor($r('app.color.bg_page'))
     }
@@ -1142,6 +1144,8 @@ struct ProfilePage {
                 }
               }
               .width('100%')
+              // 撑满 TabContent（Stack）高度；否则收藏只有一两条时列表高度=内容高，会被 Stack 居中
+              .height('100%')
               .nestedScroll({
                 scrollForward: NestedScrollMode.PARENT_FIRST,
                 scrollBackward: NestedScrollMode.SELF_FIRST
@@ -1338,6 +1342,8 @@ struct ProfilePage {
     }
     .width('100%')
     .height('100%')
+    // 未登录时内容不足一屏，Scroll 默认会垂直居中，这里显式顶部对齐
+    .align(Alignment.Top)
     .scrollBar(BarState.Off)
     .backgroundColor($r('app.color.bg_page'))
     }
@@ -1829,6 +1835,8 @@ struct CategoryPage {
           }
           .width('100%')
           .height('100%')
+          // 结果只有一行时内容不足一屏，Scroll 会垂直居中，这里显式顶部对齐
+          .align(Alignment.Top)
           .scrollBar(BarState.Off)
           .padding({ top: this.topSafeHeight + 172 })
           .onReachEnd(() => this.loadMore())
@@ -2254,6 +2262,8 @@ struct ForumPage {
         }
         .layoutWeight(1)
         .width('100%')
+        // 评论只有一两条时不足一屏，Scroll 会垂直居中，这里显式顶部对齐
+        .align(Alignment.Top)
         .scrollBar(BarState.Off)
         .onReachEnd(() => {
           if (!this.isLoadingMore && this.hasMore) {

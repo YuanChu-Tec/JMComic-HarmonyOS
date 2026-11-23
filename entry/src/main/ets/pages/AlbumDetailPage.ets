@@ -831,6 +831,9 @@ struct AlbumDetailPage {
             Column().height(this.bottomSafeHeight + 24)
           }
           .width('100%')
+          // 内容不足一屏时撑满视口并顶部对齐：否则 Scroll 会把矮内容垂直居中
+          .constraintSize({ minHeight: '100%' })
+          .justifyContent(FlexAlign.Start)
         }
         .width('100%')
         .height('100%')

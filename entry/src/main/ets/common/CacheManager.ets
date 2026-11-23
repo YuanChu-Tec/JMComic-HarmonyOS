@@ -337,7 +337,7 @@ export class CacheManager {
   }
 
   // ─── 阅读模式（竖向滚动 / 横向翻页方向） ───
-  // 取值：'scroll' 竖向滚动(下)；'paged_ltr' 横向从左往右(西漫)；'paged_rtl' 横向从右往左(日漫)
+  // 取值：'scroll' 竖向滚动(下)；'paged_ltr' 横向从左往右(国漫)；'paged_rtl' 横向从右往左(日漫)
 
   /** 读取阅读模式，默认 'scroll'（竖向连续滚动） */
   getReaderMode(): string {

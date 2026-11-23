@@ -344,6 +344,8 @@ struct AlbumCommentPage {
               }
             }
             .width('100%')
+            // 评论不足一屏时撑满视口并顶部对齐：否则 Scroll 会把矮内容垂直居中
+            .constraintSize({ minHeight: '100%' })
             .padding({ top: this.topSafeHeight + 56 })  // 避免被导航栏遮挡
             .justifyContent(FlexAlign.Start)
           }

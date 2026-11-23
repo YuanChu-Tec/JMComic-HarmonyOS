@@ -274,78 +274,85 @@ struct SearchPage {
           .height('100%')
           .justifyContent(FlexAlign.Center)
         } else if (!this.hasSearched) {
-          Column() {
-            // 搜索语法提示：+标签 包含，-标签 排除，空格分隔多个条件
-            Row() {
-              Text('+标签 包含 · -标签 排除 · 空格分隔')
-                .fontSize(12)
-                .fontColor('#999999')
-                .layoutWeight(1)
+          // 历史多到超一屏时也能滚动：Scroll 负责滚动，内层 Column 不再写死高度，按内容撑开
+          Scroll() {
+            Column() {
+              // 搜索语法提示：+标签 包含，-标签 排除，空格分隔多个条件
+              Row() {
+                Text('+标签 包含 · -标签 排除 · 空格分隔')
+                  .fontSize(12)
+                  .fontColor('#999999')
+                  .layoutWeight(1)
 
-              Text('示例【+全彩 +人妻】')
-                .fontSize(12)
-                .fontColor('#999999')
-            }
-            .width('100%')
-            .padding({ left: 16, right: 16, top: 10, bottom: 2 })
-
-            if (this.searchHistory.length > 0) {
-              // 搜索历史
-              Column() {
-                Row() {
-                  Text('搜索历史')
-                    .fontSize(14)
-                    .fontWeight(FontWeight.Medium)
-                    .fontColor($r('app.color.text_primary'))
-                    .layoutWeight(1)
-
-                  Text('清空')
-                    .fontSize(13)
-                    .fontColor($r('app.color.text_tertiary'))
-                    .padding({ left: 8, right: 8, top: 10, bottom: 10 })
-                    .onClick(() => {
-                      if (this.cache) {
-                        this.cache.clearSearchHistory();
-                        this.searchHistory = [];
-                      }
-                    })
-                }
-                .width('100%')
-                .padding({ left: 16, right: 16, top: 16, bottom: 8 })
-
-                Flex({ wrap: FlexWrap.Wrap }) {
-                  ForEach(this.searchHistory, (item: string) => {
-                    Text(item)
-                      .fontSize(13)
-                      .fontColor($r('app.color.text_secondary'))
-                      .padding({ left: 14, right: 14, top: 7, bottom: 7 })
-                      .backgroundColor($r('app.color.bg_page'))
-                      .borderRadius(16)
-                      .margin({ right: 8, bottom: 8 })
-                      .onClick(() => {
-                        this.keyword = item;
-                        this.doSearch();
-                      })
-                  }, (item: string) => item)
-                }
-                .padding({ left: 16, right: 16 })
+                Text('示例【+全彩 +人妻】')
+                  .fontSize(12)
+                  .fontColor('#999999')
               }
               .width('100%')
-              .alignItems(HorizontalAlign.Start)
-            } else {
-              SymbolGlyph($r('sys.symbol.magnifyingglass'))
-                .fontSize(48)
-                .fontColor([$r('app.color.text_disabled')])
-              Text('输入关键词搜索漫画')
-                .fontSize(15)
-                .fontColor($r('app.color.text_disabled'))
-                .margin({ top: 12 })
+              .padding({ left: 16, right: 16, top: 10, bottom: 2 })
+
+              if (this.searchHistory.length > 0) {
+                // 搜索历史
+                Column() {
+                  Row() {
+                    Text('搜索历史')
+                      .fontSize(14)
+                      .fontWeight(FontWeight.Medium)
+                      .fontColor($r('app.color.text_primary'))
+                      .layoutWeight(1)
+
+                    Text('清空')
+                      .fontSize(13)
+                      .fontColor($r('app.color.text_tertiary'))
+                      .padding({ left: 8, right: 8, top: 10, bottom: 10 })
+                      .onClick(() => {
+                        if (this.cache) {
+                          this.cache.clearSearchHistory();
+                          this.searchHistory = [];
+                        }
+                      })
+                  }
+                  .width('100%')
+                  .padding({ left: 16, right: 16, top: 16, bottom: 8 })
+
+                  Flex({ wrap: FlexWrap.Wrap }) {
+                    ForEach(this.searchHistory, (item: string) => {
+                      Text(item)
+                        .fontSize(13)
+                        .fontColor($r('app.color.text_secondary'))
+                        .padding({ left: 14, right: 14, top: 7, bottom: 7 })
+                        .backgroundColor($r('app.color.bg_page'))
+                        .borderRadius(16)
+                        .margin({ right: 8, bottom: 8 })
+                        .onClick(() => {
+                          this.keyword = item;
+                          this.doSearch();
+                        })
+                    }, (item: string) => item)
+                  }
+                  .padding({ left: 16, right: 16 })
+                }
+                .width('100%')
+                .alignItems(HorizontalAlign.Start)
+              } else {
+                SymbolGlyph($r('sys.symbol.magnifyingglass'))
+                  .fontSize(48)
+                  .fontColor([$r('app.color.text_disabled')])
+                Text('输入关键词搜索漫画')
+                  .fontSize(15)
+                  .fontColor($r('app.color.text_disabled'))
+                  .margin({ top: 12 })
+              }
             }
+            .width('100%')
+            // 内容不足一屏时撑满视口并顶部对齐：否则 Scroll 会把矮内容垂直居中
+            .constraintSize({ minHeight: '100%' })
+            .justifyContent(FlexAlign.Start)
+            .padding({ top: this.topSafeHeight + 56, bottom: this.bottomSafeHeight + 16 })
           }
           .width('100%')
           .height('100%')
-          .justifyContent(FlexAlign.Start)
-          .padding({ top: this.topSafeHeight + 56, bottom: this.bottomSafeHeight + 16 })
+          .scrollBar(BarState.Off)
         } else {
           Refresh({ refreshing: $$this.isRefreshing }) {
           Scroll() {
@@ -401,6 +408,8 @@ struct SearchPage {
               }
             }
             .width('100%')
+            // 结果不足一屏时撑满视口并顶部对齐：否则 Scroll 会把矮内容垂直居中
+            .constraintSize({ minHeight: '100%' })
             .justifyContent(FlexAlign.Start)
           }
           .width('100%')

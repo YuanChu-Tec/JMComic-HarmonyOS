@@ -55,7 +55,7 @@ struct ImageViewerPage {
   @State hasPrevChapter: boolean = false;
   @State hasNextChapter: boolean = false;
   @State isZoomed: boolean = false;
-  // 阅读模式：'scroll' 竖向滚动(下) / 'paged_ltr' 横向从左往右(西漫) / 'paged_rtl' 横向从右往左(日漫)
+  // 阅读模式：'scroll' 竖向滚动(下) / 'paged_ltr' 横向从左往右(国漫) / 'paged_rtl' 横向从右往左(日漫)
   @State readerMode: string = 'scroll';
   @State isPagedMode: boolean = false;
   @State isRtl: boolean = false;
@@ -260,12 +260,11 @@ struct ImageViewerPage {
   }
 
   /**
-   * 循环切换阅读方向：下滑动(竖向) -> 右翻页(西漫LTR) -> 左翻页(日漫RTL) -> 下滑动
-   * 箭头指示当前翻页/滑动方向；切换后重新定位到当前页，避免布局变化导致位置错乱。
+   * 循环切换阅读方向：下滑动(竖向) -> 右翻页(国漫LTR) -> 左翻页(日漫RTL) -> 下滑动
+   * 切换后重新定位到当前页，避免布局变化导致位置错乱。
    */
   cycleReaderMode(): void {
-    let order: string[] = ['scroll', 'paged_ltr', 'paged_rtl'];
-    let next = order[(order.indexOf(this.readerMode) + 1) % order.length];
+    let next = this.nextReaderMode();
     let idx = this.currentVisibleIndex;
     let gen = this.chapterGeneration;
     this.readerMode = next;
@@ -275,28 +274,35 @@ struct ImageViewerPage {
     if (next !== 'scroll') {
       // 进入/切换横向翻页：按 RTL 映射设置初始索引，挂载时直接定位；翻转 swiperToggle 重建 Swiper
       this.swiperInitialIndex = this.isRtl ? (this.totalImages - 1 - idx) : idx;
+      // guard 期间锁定目标页，避免 Swiper 重建瞬间以 0 索引上报把页码冲回首页
+      this.restorePageTarget = idx;
       this.restoreGuard = true;
       this.swiperToggle = !this.swiperToggle;
       setTimeout(() => {
         if (gen === this.chapterGeneration) {
           this.restoreGuard = false;
+          this.restorePageTarget = -1;
         }
       }, 400);
     } else {
-      setTimeout(() => {
-        if (gen === this.chapterGeneration) {
-          this.listScroller.scrollToIndex(idx, false, ScrollAlign.START);
-        }
-      }, 60);
+      // 从翻页切回竖向滚动：List 重新挂载，挂载瞬间会以 start=0 上报，
+      // 必须先上 guard 再分段校正，否则页码会先退到第 1 页再跳回来
+      this.scrollListTo(idx, gen);
     }
   }
 
-  /** 底栏模式切换钮文案：显示点击后将进入的目标模式 */
-  private nextModeLabel(): string {
-    if (this.readerMode === 'scroll') {
-      return '翻页模式';
-    }
+  /** 按既定顺序算出下一个阅读模式：切换动作与按钮文案共用同一处推断，避免各自猜顺序导致错位 */
+  private nextReaderMode(): string {
+    let order: string[] = ['scroll', 'paged_ltr', 'paged_rtl'];
+    return order[(order.indexOf(this.readerMode) + 1) % order.length];
+  }
+
+  /** 底栏模式钮文案：显示当前所处模式，点击后按「滚动 -> 国漫 -> 日漫」循环切换 */
+  private currentModeLabel(): string {
     if (this.readerMode === 'paged_ltr') {
+      return '国漫模式';
+    }
+    if (this.readerMode === 'paged_rtl') {
       return '日漫模式';
     }
     return '滚动模式';
@@ -364,9 +370,18 @@ struct ImageViewerPage {
     }
 
     if (!valid) return;
+    console.info(`[ImageViewer] restored read position: ${target + 1}/${this.totalImages}`);
+    this.scrollListTo(target, gen);
+  }
+
+  /**
+   * 竖向滚动定位到目标页。
+   * 图片解码前后 item 高度会变化，单次 scrollToIndex 容易落偏，故按 80/400ms 两段校正；
+   * 定位期间保持 restoreGuard，屏蔽 List 挂载瞬间 start=0 的上报（否则页码会被冲回首页）。
+   */
+  private scrollListTo(target: number, gen: number): void {
     this.restoreGuard = true;
     this.currentVisibleIndex = target;
-    // 图片解码前后 item 高度会变化，需要重复校正落点
     let delays: number[] = [80, 400];
     for (let d of delays) {
       let isLast: boolean = (d === delays[delays.length - 1]);
@@ -378,7 +393,6 @@ struct ImageViewerPage {
         this.listScroller.scrollToIndex(target, false, ScrollAlign.START);
         this.loadPixelMap(target);
         this.preloadNearbyPixelMaps(target);
-        console.info(`[ImageViewer] restored read position: ${target + 1}/${this.totalImages}`);
         if (isLast) {
           this.currentVisibleIndex = target;
           // 落点稳定后再开放索引上报与写盘
@@ -417,8 +431,10 @@ struct ImageViewerPage {
       // Swiper 下标 -> 自然页码（RTL 反转）
       let natural = this.isRtl ? (this.totalImages - 1 - index) : index;
       if (this.restoreGuard) {
-        // 恢复阶段：仅同步索引，定位已由 Swiper 初始索引完成，无需逐步翻页
-        this.currentVisibleIndex = natural;
+        // 恢复阶段：定位由初始索引完成，期间只维持目标页，不采信重建瞬间的瞬时索引
+        if (this.restorePageTarget >= 0) {
+          this.currentVisibleIndex = this.restorePageTarget;
+        }
         return;
       }
       if (natural >= 0 && natural !== this.currentVisibleIndex) {
@@ -465,6 +481,32 @@ struct ImageViewerPage {
         this.decodedPixelMaps.splice(natural, 1, null);
       }
     })
+  }
+
+  /**
+   * 由首/末可见项算出当前页。
+   *
+   * 末尾几页总高不足一屏时，滚到底也只能把 start 停在 total-3，页码永远到不了末页，
+   * 所以当末页已在视野内、且 List 确实无法再向下滚动时，直接把当前页判为末页。
+   * 单看「末页已可见」会误报：末页刚露出 1px 就把页码跳到末页，比停在倒数第三页更别扭。
+   */
+  private resolveVisibleIndex(start: number, end: number): number {
+    if (start >= this.totalImages - 1) {
+      return this.totalImages - 1;
+    }
+    if (end >= this.totalImages - 1 && this.listScroller.isAtEnd()) {
+      return this.totalImages - 1;
+    }
+    return start;
+  }
+
+  /** 页码唯一的下发点：更新显示 + 防抖写盘 */
+  private reportVisibleIndex(index: number): void {
+    if (index < 0 || index === this.currentVisibleIndex) {
+      return;
+    }
+    this.currentVisibleIndex = index;
+    this.scheduleSavePosition(index);
   }
 
   /** 防抖保存阅读位置（快速滑动时不频繁落盘） */
@@ -730,10 +772,11 @@ struct ImageViewerPage {
   private bottomBar() {
     Column({ space: 12 }) {
       Row({ space: 10 }) {
-        Text(`${this.currentVisibleIndex + 1}`)
+        // 日漫(RTL)下滑条反向：最小值在右、最大值在左，左侧数字随之改为总页数
+        Text(this.isRtl ? `${this.totalImages}` : `${this.currentVisibleIndex + 1}`)
           .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#FFFFFF')
+          .fontWeight(this.isRtl ? FontWeight.Normal : FontWeight.Medium)
+          .fontColor(this.isRtl ? '#99FFFFFF' : '#FFFFFF')
           .width(34)
           .textAlign(TextAlign.End)
         Slider({
@@ -752,9 +795,11 @@ struct ImageViewerPage {
           .onChange((value: number) => {
             this.seekTo(Math.max(0, Math.round(value) - 1));
           })
-        Text(`${this.totalImages}`)
+        // 反向时当前页落在滑条右端，与右侧数字（起始侧）对应
+        Text(this.isRtl ? `${this.currentVisibleIndex + 1}` : `${this.totalImages}`)
           .fontSize(13)
-          .fontColor('#99FFFFFF')
+          .fontWeight(this.isRtl ? FontWeight.Medium : FontWeight.Normal)
+          .fontColor(this.isRtl ? '#FFFFFF' : '#99FFFFFF')
           .width(34)
           .textAlign(TextAlign.Start)
       }
@@ -777,7 +822,7 @@ struct ImageViewerPage {
         .backgroundColor(this.hasPrevChapter ? '#14FFFFFF' : '#0DFFFFFF')
         .onClick(() => this.goPrevChapter())
 
-        Text(this.nextModeLabel())
+        Text(this.currentModeLabel())
           .fontSize(13)
           .fontWeight(FontWeight.Medium)
           .fontColor('#FFFFFF')
@@ -909,17 +954,18 @@ struct ImageViewerPage {
             .scrollBarColor('#BBBBBB')
             .scrollBarWidth(6)
             .cachedCount(10)
-            .onScrollIndex((start: number) => {
+            .onScrollIndex((start: number, end: number) => {
               // 首可见项变化时回调，是当前页码唯一准确的来源
               if (this.restoreGuard) {
                 return;
               }
-              if (start >= 0 && start !== this.currentVisibleIndex) {
-                this.currentVisibleIndex = start;
-                this.scheduleSavePosition(start);
-              }
+              this.reportVisibleIndex(this.resolveVisibleIndex(start, end));
             })
             .onReachEnd(() => {
+              // 末页保底：isAtEnd 要到滚动的最后一帧才为真，onScrollIndex 可能来不及修正
+              if (!this.restoreGuard) {
+                this.reportVisibleIndex(this.totalImages - 1);
+              }
               // 滚到底不自动切章：唤起工具栏由用户决定去向（参考 Cimoc 阅读器）
               if (!this.showControls) {
                 this.toggleControls();
