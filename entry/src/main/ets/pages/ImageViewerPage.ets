@@ -146,18 +146,26 @@ struct ImageViewerPage {
         console.info(`[ImageViewer] local instant load: ${this.photoId}, cached=${this.library.cachedImageCount(localCtx)}/${localCtx.imgNames.length}`);
       }
 
-      // ② 每次必请求服务器元数据（不再依赖 TTL 缓存）
+      // ② 本地 PNG 齐全就不再请求服务器元数据：换版/补页只由「清空图片仓库」主动驱动，
+      //    不在每次进章节时比对网络。本地缺页才拉一次元数据补齐。
+      let localComplete = false;
+      if (localCtx !== null) {
+        localComplete = localLoaded && this.library.cachedImageCount(localCtx) >= localCtx.imgNames.length;
+      }
       let data: PictureData | null = null;
-      try {
-        data = await this.apiService.getChapterPictures(this.photoId, this.scrambleId);
-        // 元数据本体落盘（服务器返回的稳定内容）
-        this.cache.saveChapterData(this.photoId, JSON.stringify(data));
-      } catch (err) {
-        if (!localLoaded) {
-          // ArkTS 限制：不能把任意类型抛出去，统一包成 Error
-          throw err instanceof Error ? err : new Error(String(err));
+      if (localComplete) {
+        console.info(`[ImageViewer] local complete, skip server meta: ${this.photoId}`);
+      } else {
+        try {
+          // 元数据只落 ComicLibrary 的 meta.json（整章下载完成后由 commit 写入），不在库里另存一份
+          data = await this.apiService.getChapterPictures(this.photoId, this.scrambleId);
+        } catch (err) {
+          if (!localLoaded) {
+            // ArkTS 限制：不能把任意类型抛出去，统一包成 Error
+            throw err instanceof Error ? err : new Error(String(err));
+          }
+          console.warn(`[ImageViewer] server meta fetch failed, continue with local: ${JSON.stringify(err)}`);
         }
-        console.warn(`[ImageViewer] server meta fetch failed, continue with local: ${JSON.stringify(err)}`);
       }
 
       if (gen !== this.chapterGeneration) return;
@@ -182,24 +190,18 @@ struct ImageViewerPage {
         imgNames: imgNames,
       } as LibraryContext;
 
-      // 服务器最新 URL 入表，供预加载/降级下载使用（无论是否换版本）
+      // 服务器最新 URL 入表，供缺页/预加载使用
       for (let img of data.pictures.images) {
         this.currentImageUrls.set(img.img_name, img.img_url || img.download_url);
       }
 
-      let changed = this.library.isMetaChanged(targetCtx);
-
-      if (!changed && localLoaded) {
-        // 元数据未变：本地 PNG 继续用，无需重建，只更新标题等
+      if (localLoaded) {
+        // 不比对指纹：本地能显示就用本地的。服务器改页序/增删页都不会打断当前阅读，
+        // 想要最新版本走设置页「清空图片仓库」后重新进入。
         this.titleText = data.pictures.name || this.titleText;
-        console.info(`[ImageViewer] meta unchanged, keep local images`);
+        console.info(`[ImageViewer] keep local images: ${this.photoId}`);
       } else {
-        // 元数据有变化（或本地尚无数据）：直接应用最新列表，
-        // 预加载器逐页 ensureImage —— 内容没变的页复用旧图，变了的页逐页原子替换，
-        // 整个过程中每一页都完整可读，不会出现整章空白。
-        if (changed) {
-          console.info(`[ImageViewer] meta changed: ${this.photoId}, replace page by page`);
-        }
+        // 本地无数据：按服务器列表建立页面并开始下载
         this.applyContext(targetCtx, true);
       }
     } catch (err) {
@@ -553,8 +555,8 @@ struct ImageViewerPage {
     while (this.preloadIndex < this.totalImages) {
       let idx = this.preloadIndex;
       this.preloadIndex++;
-      // 注意：这里不能用 hasImage 跳过——换版时旧图仍在盘上，
-      // 是否需要替换由 ensureImage 按「页」判断（比对文件名与解码参数）
+      // 注意：这里不能用 hasImage 跳过——本地缺页时 ensureImage 要按「页」补下载，
+      // 已有页由它内部直接复用，不会重复请求
       this.preloadInFlight++;
       this.preloadToDisk(idx);
       return;

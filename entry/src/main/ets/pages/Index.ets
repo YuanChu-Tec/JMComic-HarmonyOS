@@ -1,8 +1,10 @@
 import { display, uiMaterial } from '@kit.ArkUI';
 import { ApiService } from '../network/ApiService';
-import { AlbumViewModel, IAlbumViewModelJSON, respToJmAlbumInfo } from '../models/Album';
-import { parseCommentRaw } from '../models/ComicAlbumRealtime';
-import { JmPromoteSection, SearchResultData, CommentPageData,
+import {
+  AlbumViewModel, JmAlbumInfo, albumToJmAlbumInfo, respToJmAlbumInfo
+} from '../models/Album';
+import { parseCommentRaw } from '../models/ComicAlbum';
+import { JmPromoteSection, SearchResultData, CommentPageData, CommentInfoRaw,
   FavoriteFolderItem, FavoriteAlbumItem, RespJmAlbumInfo,
 } from '../models/dto/ApiDto';
 import { CacheManager } from '../common/CacheManager';
@@ -13,15 +15,17 @@ import {
   CATEGORY_NAME_MAP, ORDER_BY_LATEST, ORDER_MONTH_RANKING,
   ORDER_WEEK_RANKING, ORDER_DAY_RANKING, ORDER_BY_LIKE,
   ORDER_NAME_MAP, PAGE_SIZE_FAVORITE,
-  SECTION_SOURCE_LATEST, SECTION_SOURCE_PROMOTE,
+  MORE_FEED_PREFIX, SECTION_SOURCE_LATEST, SECTION_SOURCE_PROMOTE,
 } from '../common/Constants';
 import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { CommentItemComponent } from '../common/CommentItem';
 import { DeviceUtils } from 'common';
-import { AccountManager } from '../common/AccountManager';
+import { AccountManager, ActiveCredentials } from '../common/AccountManager';
 import { ComicLibrary, CleanupRule } from '../common/ComicLibrary';
-import { CommentInfo, COMMENT_MODE_ALL, COMMENT_MODE_MANHUA, COMMENT_MODE_CHAT,
-  COMMENT_MODE_NAME_MAP } from '../models/ComicAlbumRealtime';
+import { ComicAlbum, CommentInfo, COMMENT_MODE_ALL, COMMENT_MODE_MANHUA, COMMENT_MODE_CHAT,
+  COMMENT_MODE_NAME_MAP } from '../models/ComicAlbum';
+import { FEED_HOME_LATEST, FEED_HOME_PROMOTE } from '../models/AlbumFeed';
+import { AlbumDao } from '../storage/AlbumDao';
 import { JmAlbumCard } from './JmAlbumCard';
 import { navPush } from '../common/NavHelper';
 import { AlbumDetailParams, SectionMoreParams } from '../common/RouteParams';
@@ -39,25 +43,97 @@ interface ForumModeItem {
 // ═══════════════════════════════════════════
 // 首页 — 推荐分区横向滑动
 // ═══════════════════════════════════════════
+/** 首页一个推广分区：标题 + 卡片的显示数据（全部来自库） */
+interface PromoteSectionVM {
+  key: string;
+  title: string;
+  albums: JmAlbumInfo[];
+}
+
 @Component
 struct HomePage {
-  @State sections: JmPromoteSection[] = [];
-  @State latestAlbums: RespJmAlbumInfo[] = [];
+  @State sections: PromoteSectionVM[] = [];
+  @State latestAlbums: JmAlbumInfo[] = [];
   @State isLoading: boolean = true;
   @State loadFailed: boolean = false;
+  /** 下拉刷新指示器：只表示用户手动拉取中，与首屏 isLoading 分开 */
+  @State isRefreshing: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
+  /** 设置页改了刷新间隔 / 切回首页时递增，按新的 TTL 重新判断 */
+  @StorageProp('feedRefreshTick') @Watch('onFeedRefreshTick') feedRefreshTick: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
+  /** 本地数据的落库时间，用来判断要不要刷新 */
+  private localUpdatedAt: number = 0;
+  /** 刷新代号：每发起一轮 +1，晚到的旧响应据此丢弃，避免乱序落库把列表换回去 */
+  private feedSeq: number = 0;
+  /** 下拉刷新是否已有一轮在跑：Refresh 只管指示器，挡不住重复触发 */
+  private isPulling: boolean = false;
 
   async aboutToAppear(): Promise<void> {
+    console.info('[HomePage] aboutToAppear');
     await this.loadData();
   }
 
-  /** 加载首页数据；失败时可由「重新加载」按钮再次调用 */
+  /** 本地优先：有本地数据先渲染，缺失或过期才联网 */
   async loadData(): Promise<void> {
-    this.isLoading = true;
     this.loadFailed = false;
+    try {
+      let hasLocal = await this.renderFromStore();
+      console.info(`[HomePage] hasLocal=${hasLocal}, updatedAt=${this.localUpdatedAt}, stale=${this.isStale()}`);
+      this.isLoading = !hasLocal;
+      if (hasLocal && !this.isStale()) {
+        return;
+      }
+      await this.refresh();
+    } catch (err) {
+      // 读库本身出错时不会进 refresh，这里兜底，避免界面永远停在加载中
+      console.error('[HomePage] loadData error:', JSON.stringify(err));
+      this.isLoading = false;
+      this.loadFailed = true;
+    }
+  }
+
+  /** 本地是否过期：落库时间早于 TTL（间隔与开关都由设置页控制） */
+  private isStale(): boolean {
+    return Date.now() - this.localUpdatedAt > CacheManager.feedTtlMsOf(CacheManager.REFRESH_HOME);
+  }
+
+  onFeedRefreshTick(): void {
+    if (this.isLoading) return;
+    this.loadData();
+  }
+
+  /** 从库里读并渲染，返回本地是否有可显示内容 */
+  private async renderFromStore(): Promise<boolean> {
+    let latest = await AlbumDao.loadFeed(FEED_HOME_LATEST);
+    let promote = await AlbumDao.loadFeed(FEED_HOME_PROMOTE);
+    let latestAlbums: JmAlbumInfo[] = [];
+    if (latest.sections.length > 0) {
+      latestAlbums = latest.sections[0].albums.map((album: ComicAlbum) => albumToJmAlbumInfo(album));
+    }
+    let sections: PromoteSectionVM[] = [];
+    for (let section of promote.sections) {
+      if (section.albums.length === 0) continue;
+      // /promote 的首段常常也叫「最新上传」，而首页顶部已经用 /latest 单独渲染了它。
+      // 两块同名列表来自两个接口、内容并不一致，会让人以为「最新上传」在不停切换。
+      if (section.title === '最新上传') continue;
+      sections.push({
+        key: section.key,
+        title: section.title,
+        albums: section.albums.map((album: ComicAlbum) => albumToJmAlbumInfo(album)),
+      });
+    }
+    this.latestAlbums = latestAlbums;
+    this.sections = sections;
+    this.localUpdatedAt = Math.max(latest.updatedAt, promote.updatedAt);
+    return latestAlbums.length > 0 || sections.length > 0;
+  }
+
+  /** 联网刷新：响应先落库，再从库读回来渲染 */
+  private async refresh(): Promise<void> {
+    let seq = ++this.feedSeq;
     try {
       let results = await Promise.all([
         this.apiService.getPromote(),
@@ -65,26 +141,99 @@ struct HomePage {
       ]);
       let promoteResp = results[0];
       let latestResp = results[1];
+      // 请求期间又发起了更新的一轮：这轮的响应已过期，不能覆盖库和界面
+      if (seq !== this.feedSeq) {
+        return;
+      }
       if (promoteResp.code === 200 && promoteResp.data) {
-        this.sections = promoteResp.data as JmPromoteSection[];
+        await AlbumDao.savePromoteFeed(FEED_HOME_PROMOTE, promoteResp.data as JmPromoteSection[]);
       }
       if (latestResp.code === 200 && latestResp.data) {
-        this.latestAlbums = latestResp.data as RespJmAlbumInfo[];
+        // 最新上传的接口不给总数，total 记 -1（未知）
+        await AlbumDao.saveFeed(FEED_HOME_LATEST, latestResp.data as RespJmAlbumInfo[], -1);
+      }
+      if (!await this.renderFromStore()) {
+        this.loadFailed = true;
       }
     } catch (err) {
       console.error('[HomePage] load error:', JSON.stringify(err));
-      this.loadFailed = true;
+      // 本地已有内容时不打扰用户，只有全空才提示加载失败
+      this.loadFailed = this.latestAlbums.length === 0 && this.sections.length === 0;
     } finally {
       this.isLoading = false;
     }
   }
 
-  onSectionMore(title: string, albums: RespJmAlbumInfo[], source: string): void {
-    navPush('SectionMorePage', { sectionTitle: title, initialAlbums: albums, source: source } as SectionMoreParams);
+  /**
+   * 下拉刷新：只重建列表成员与顺序，用来拉新漫画。
+   * - 不走 TTL、不看「首页」范围开关：这是用户的显式动作
+   * - 不覆盖已有作品的字段与封面：那是「刷新内容」与自动刷新的职责
+   */
+  private async pullRefresh(): Promise<void> {
+    if (this.isLoading) {
+      // 首屏还在加载，这次下拉不并发写库
+      this.isRefreshing = false;
+      return;
+    }
+    if (this.isPulling) {
+      // 上一轮还没落库完：忽略这次触发，指示器跟着已在跑的那轮走
+      return;
+    }
+    this.isPulling = true;
+    let seq = ++this.feedSeq;
+    try {
+      let results = await Promise.all([
+        this.apiService.getPromote(),
+        this.apiService.getLatest()
+      ]);
+      let promoteResp = results[0];
+      let latestResp = results[1];
+      // 请求期间又发起了更新的一轮：这轮的响应已过期，不能覆盖库和界面
+      if (seq !== this.feedSeq) {
+        return;
+      }
+      let landed = false;
+      if (promoteResp.code === 200 && promoteResp.data) {
+        await AlbumDao.savePromoteFeedKeepList(FEED_HOME_PROMOTE, promoteResp.data as JmPromoteSection[]);
+        landed = true;
+      }
+      if (latestResp.code === 200 && latestResp.data) {
+        // 最新上传的接口不给总数，total 记 -1（未知）
+        await AlbumDao.saveFeedKeepList(FEED_HOME_LATEST, latestResp.data as RespJmAlbumInfo[], -1);
+        landed = true;
+      }
+      if (landed) {
+        // 源列表成员变了，分区「更多」的旧分页不再对应同一份列表
+        await AlbumDao.clearFeedPrefix(MORE_FEED_PREFIX);
+        await this.renderFromStore();
+      } else {
+        this.showToast('刷新失败，已保留本地内容');
+      }
+    } catch (err) {
+      console.error('[HomePage] pull refresh error:', JSON.stringify(err));
+      this.showToast('刷新失败，已保留本地内容');
+    } finally {
+      this.isPulling = false;
+      this.isRefreshing = false;
+    }
+  }
+
+  private showToast(message: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({ message: message, duration: 2000 });
+    } catch (e) {
+      console.warn('[HomePage] toast error:', JSON.stringify(e));
+    }
+  }
+
+  onSectionMore(title: string, feedKey: string, sectionKey: string, source: string): void {
+    navPush('SectionMorePage', {
+      sectionTitle: title, feedKey: feedKey, sectionKey: sectionKey, source: source
+    } as SectionMoreParams);
   }
 
   @Builder
-  SectionMoreEntry(title: string, albums: RespJmAlbumInfo[], source: string) {
+  SectionMoreEntry(title: string, feedKey: string, sectionKey: string, source: string) {
     Row({ space: 2 }) {
       Text('更多')
         .fontSize(13)
@@ -95,128 +244,135 @@ struct HomePage {
     }
     .alignItems(VerticalAlign.Center)
     .padding({ left: 8, right: 8, top: 8, bottom: 8 })
-    .onClick(() => this.onSectionMore(title, albums, source))
+    .onClick(() => this.onSectionMore(title, feedKey, sectionKey, source))
   }
 
   build() {
-    Scroll() {
-      Column() {
-        if (this.isLoading) {
-          Column() {
-            LoadingProgress()
-              .width(40)
-              .height(40)
-              .color($r('app.color.brand'))
-            Text('加载中...')
-              .fontSize(14)
-              .fontColor($r('app.color.text_tertiary'))
-              .margin({ top: 12 })
-          }
-          .width('100%')
-          .height(300)
-          .justifyContent(FlexAlign.Center)
-        } else if (this.loadFailed && this.sections.length === 0 && this.latestAlbums.length === 0) {
-          Column() {
-            Text('加载失败')
-              .fontSize(16)
-              .fontColor($r('app.color.text_tertiary'))
-            Button('重新加载')
-              .fontSize(14)
-              .fontColor($r('app.color.text_on_accent'))
-              .backgroundColor($r('app.color.brand'))
-              .borderRadius(18)
-              .padding({ left: 24, right: 24 })
-              .height(36)
-              .margin({ top: 16 })
-              .onClick(() => this.loadData())
-          }
-          .width('100%')
-          .height(300)
-          .justifyContent(FlexAlign.Center)
-        } else if (this.sections.length === 0 && this.latestAlbums.length === 0) {
-          Column() {
-            Text('暂无数据')
-              .fontSize(16)
-              .fontColor($r('app.color.text_tertiary'))
-          }
-          .width('100%')
-          .height(300)
-          .justifyContent(FlexAlign.Center)
-        } else {
-          // ── 最新上传分区（始终最前） ──
-          if (this.latestAlbums.length > 0) {
+    Refresh({ refreshing: $$this.isRefreshing }) {
+      Scroll() {
+        Column() {
+          if (this.isLoading) {
             Column() {
-              Row() {
-                Text('最新上传')
-                  .fontSize(17)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor($r('app.color.text_primary'))
-                  .layoutWeight(1)
-
-                this.SectionMoreEntry('最新上传', this.latestAlbums, SECTION_SOURCE_LATEST)
-              }
-              .width('100%')
-              .padding({ left: 16, right: 16, top: 16, bottom: 10 })
-
-              Scroll() {
-                Row({ space: 10 }) {
-                  ForEach(this.latestAlbums, (album: RespJmAlbumInfo) => {
-                    JmAlbumCard({ isTablet: this.isTablet, cardInfo: respToJmAlbumInfo(album) })
-                  }, (album: RespJmAlbumInfo) => {
-                    return `${album.id}`
-                  })
-                }
-                .padding({ left: 16, right: 16 })
-              }
-              .scrollable(ScrollDirection.Horizontal)
-              .scrollBar(BarState.Off)
-              .width('100%')
+              LoadingProgress()
+                .width(40)
+                .height(40)
+                .color($r('app.color.brand'))
+              Text('加载中...')
+                .fontSize(14)
+                .fontColor($r('app.color.text_tertiary'))
+                .margin({ top: 12 })
             }
-          }
-
-          // ── 推广分区 ──
-          ForEach(this.sections, (section: JmPromoteSection) => {
+            .width('100%')
+            .height(300)
+            .justifyContent(FlexAlign.Center)
+          } else if (this.loadFailed && this.sections.length === 0 && this.latestAlbums.length === 0) {
             Column() {
-              // 分区标题
-              Row() {
-                Text(section.title)
-                  .fontSize(17)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor($r('app.color.text_primary'))
-                  .layoutWeight(1)
-
-                // 传入当前推广分区自身的标题与数据，不能用「最新上传」，
-                // 否则所有分区的更多页都会展示最新上传数据并走错分页接口
-                this.SectionMoreEntry(section.title, section.content, SECTION_SOURCE_PROMOTE)
-              }
-              .width('100%')
-              .padding({ left: 16, right: 16, top: 16, bottom: 10 })
-
-              // 横向滑动列表
-              Scroll() {
-                Row({ space: 10 }) {
-                  ForEach(section.content, (album: RespJmAlbumInfo) => {
-                    JmAlbumCard({isTablet: this.isTablet, cardInfo: respToJmAlbumInfo(album)})
-                  }, (album: RespJmAlbumInfo) => {
-                    return `${album.id}`
-                  })
-                }
-                .padding({ left: 16, right: 16 })
-              }
-              .scrollable(ScrollDirection.Horizontal)
-              .scrollBar(BarState.Off)
-              .width('100%')
+              Text('加载失败')
+                .fontSize(16)
+                .fontColor($r('app.color.text_tertiary'))
+              Button('重新加载')
+                .fontSize(14)
+                .fontColor($r('app.color.text_on_accent'))
+                .backgroundColor($r('app.color.brand'))
+                .borderRadius(18)
+                .padding({ left: 24, right: 24 })
+                .height(36)
+                .margin({ top: 16 })
+                .onClick(() => this.loadData())
             }
-          }, (section: JmPromoteSection) => section.title)
+            .width('100%')
+            .height(300)
+            .justifyContent(FlexAlign.Center)
+          } else if (this.sections.length === 0 && this.latestAlbums.length === 0) {
+            Column() {
+              Text('暂无数据')
+                .fontSize(16)
+                .fontColor($r('app.color.text_tertiary'))
+            }
+            .width('100%')
+            .height(300)
+            .justifyContent(FlexAlign.Center)
+          } else {
+            // ── 最新上传分区（始终最前） ──
+            if (this.latestAlbums.length > 0) {
+              Column() {
+                Row() {
+                  Text('最新上传')
+                    .fontSize(17)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor($r('app.color.text_primary'))
+                    .layoutWeight(1)
+
+                  this.SectionMoreEntry('最新上传', FEED_HOME_LATEST, FEED_HOME_LATEST, SECTION_SOURCE_LATEST)
+                }
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 16, bottom: 10 })
+
+                Scroll() {
+                  Row({ space: 10 }) {
+                    ForEach(this.latestAlbums, (album: JmAlbumInfo) => {
+                      JmAlbumCard({ isTablet: this.isTablet, cardInfo: album })
+                    }, (album: JmAlbumInfo) => {
+                      return `${album.id}`
+                    })
+                  }
+                  .padding({ left: 16, right: 16 })
+                }
+                .scrollable(ScrollDirection.Horizontal)
+                .scrollBar(BarState.Off)
+                .width('100%')
+              }
+            }
+
+            // ── 推广分区 ──
+            ForEach(this.sections, (section: PromoteSectionVM) => {
+              Column() {
+                // 分区标题
+                Row() {
+                  Text(section.title)
+                    .fontSize(17)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor($r('app.color.text_primary'))
+                    .layoutWeight(1)
+
+                  // 传入当前推广分区自身的标识，不能用「最新上传」，
+                  // 否则所有分区的更多页都会展示最新上传数据并走错分页接口
+                  this.SectionMoreEntry(section.title, FEED_HOME_PROMOTE, section.key, SECTION_SOURCE_PROMOTE)
+                }
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 16, bottom: 10 })
+
+                // 横向滑动列表
+                Scroll() {
+                  Row({ space: 10 }) {
+                    ForEach(section.albums, (album: JmAlbumInfo) => {
+                      JmAlbumCard({isTablet: this.isTablet, cardInfo: album})
+                    }, (album: JmAlbumInfo) => {
+                      return `${album.id}`
+                    })
+                  }
+                  .padding({ left: 16, right: 16 })
+                }
+                .scrollable(ScrollDirection.Horizontal)
+                .scrollBar(BarState.Off)
+                .width('100%')
+              }
+            }, (section: PromoteSectionVM) => section.key)
+          }
         }
+        .width('100%')
+        .padding({ top: this.topSafeHeight + 64, bottom: this.bottomSafeHeight + 100 })
       }
       .width('100%')
-      .padding({ top: this.topSafeHeight + 64, bottom: this.bottomSafeHeight + 100 })
+      .height('100%')
+      .scrollBar(BarState.Off)
+      .backgroundColor($r('app.color.bg_page'))
     }
+    .onRefreshing(() => {
+      this.pullRefresh();
+    })
     .width('100%')
     .height('100%')
-    .scrollBar(BarState.Off)
-    .backgroundColor($r('app.color.bg_page'))
   }
 
 }
@@ -229,7 +385,14 @@ struct ProfilePage {
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @StorageProp('isLoggedIn') @Watch('onLoginStateChanged') isLoggedIn: boolean = false;
+  /** 冷启动静默复验中：期间不发起需要登录的请求，避免拿未验证的会话打空枪 */
+  @StorageProp('sessionPending') @Watch('onSessionPendingChanged') sessionPending: boolean = false;
   @StorageProp('activeUsername') @Watch('onActiveUserChanged') activeUsername: string = '';
+  /** 设置页改了刷新间隔 / 切回个人中心时递增，按新的 TTL 重新判断 */
+  @StorageProp('feedRefreshTick') @Watch('onFeedRefreshTick') feedRefreshTick: number = 0;
+  /** 收藏 / 历史各自最近一次落库时间 */
+  private favLocalUpdatedAt: number = 0;
+  private watchLocalUpdatedAt: number = 0;
   @State favAlbums: AlbumViewModel[] = [];
   @State favFolders: FavoriteFolderItem[] = [];
   @State favCurrentFolderId: string = '0';
@@ -249,14 +412,20 @@ struct ProfilePage {
   @State watchSelectMode: boolean = false;
   @State watchSelectedIds: Set<string> = new Set<string>();
   @State isDeleting: boolean = false;
+  /** 下拉刷新指示器：只在登录态下由用户手动触发 */
+  @State isRefreshing: boolean = false;
   private tabsController: TabsController = new TabsController();
   private outerScroller: Scroller = new Scroller();
   private apiService: ApiService = ApiService.getInstance();
+  private cache: CacheManager | null = null;
   private loadedUsername: string = '';
+  /** 下拉刷新是否已有一轮在跑：Refresh 只管指示器，挡不住重复触发 */
+  private isPulling: boolean = false;
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
 
-  aboutToAppear(): void {
+  async aboutToAppear(): Promise<void> {
     AppStorage.setOrCreate('isLoggedIn', this.apiService.isLoggedIn());
+    this.cache = await CacheManager.getInstance();
     // 按当前会话用户加载收藏/历史（多账号切换时按用户去重刷新）
     this.ensureLoadedForUser();
   }
@@ -285,8 +454,19 @@ struct ProfilePage {
     }
   }
 
+  /**
+   * 静默复验结束才真正加载：复验前恢复的会话可能已被服务端作废，
+   * 此时先按失效 cookie 去拉收藏/历史只会白跑一趟并闪「加载失败」。
+   */
+  onSessionPendingChanged(): void {
+    if (!this.sessionPending && this.isLoggedIn) {
+      this.ensureLoadedForUser();
+    }
+  }
+
   /** 同一账号仅加载一次；账号变更时重置列表并重新加载 */
   private ensureLoadedForUser(): void {
+    if (this.sessionPending) return;
     let username = this.apiService.getUserSession().username;
     if (!username || this.loadedUsername === username) return;
     this.loadedUsername = username;
@@ -316,6 +496,19 @@ struct ProfilePage {
   }
 
   async loadWatchCount(): Promise<void> {
+    // 本地优先：已落库的历史页足够给出条数
+    let snapshots = await AlbumDao.loadFeedPages(this.watchPrefix());
+    let count = 0;
+    for (let snapshot of snapshots) {
+      if (snapshot.sections.length > 0) {
+        count += snapshot.sections[0].albums.length;
+      }
+    }
+    if (count > 0) {
+      this.watchTotal = count;
+      return;
+    }
+    // 本地缺失才走网络
     try {
       let resp = await this.apiService.getWatchList(1);
       if (resp.code === 200 && resp.data) {
@@ -350,32 +543,93 @@ struct ProfilePage {
     navPush('DownloadPage');
   }
 
+  /** 当前收藏夹在库里的分页前缀（按账号隔离，避免多账号串数据） */
+  private favPrefix(): string {
+    return `fav:${this.loadedUsername}:${this.favCurrentFolderId}:p`;
+  }
+
+  /** 从库里读出该收藏夹的全部已落库页并渲染 */
+  private async renderFavoritesFromStore(): Promise<boolean> {
+    let snapshots = await AlbumDao.loadFeedPages(this.favPrefix());
+    let albums: AlbumViewModel[] = [];
+    this.favLocalUpdatedAt = 0;
+    for (let snapshot of snapshots) {
+      this.favLocalUpdatedAt = Math.max(this.favLocalUpdatedAt, snapshot.updatedAt);
+      if (snapshot.sections.length === 0) continue;
+      for (let album of snapshot.sections[0].albums) {
+        albums.push(AlbumViewModel.fromAlbum(album,
+          this.apiService.coverSource(album.id, '_3x4', album.imageName)));
+      }
+    }
+    this.favAlbums = albums;
+    if (this.cache) {
+      let folders = this.cache.loadFavoriteFolders(this.loadedUsername);
+      if (folders.length > 0) {
+        this.favFolders = folders;
+      }
+    }
+    return albums.length > 0;
+  }
+
+  /** 收藏项 → 列表项（字段与 RespJmAlbumInfo 兼容，落库用） */
+  private favoriteToInfo(item: FavoriteAlbumItem): RespJmAlbumInfo {
+    return {
+      id: item.id,
+      name: item.name,
+      author: item.author,
+      image: item.image,
+      description: item.description,
+      category: item.category,
+    };
+  }
+
   async loadFavorites(): Promise<void> {
     if (this.favIsLoading) return;
+    // 一进函数就置加载态：读库这几毫秒也别让用户看到"还没有收藏"
     this.favIsLoading = true;
     this.favLoadFailed = false;
+    let prefix = this.favPrefix();
+    let page = this.favCurrentPage;
+    // 1. 本地优先：首页回放全部已落库页，翻页只看这一页在不在
+    if (page === 1) {
+      let hasLocal = await this.renderFavoritesFromStore();
+      if (hasLocal && !this.isFavStale()) {
+        let pages = await AlbumDao.feedPageNumbers(prefix);
+        this.favCurrentPage = pages.length > 0 ? pages[pages.length - 1] : 1;
+        this.favNeedLoad = false;
+        this.favIsLoading = false;
+        return;
+      }
+      if (hasLocal) {
+        // 过期：收藏夹整体作废，从第一页重拉
+        await AlbumDao.clearFeedPrefix(prefix);
+        this.favAlbums = [];
+        this.favCurrentPage = 1;
+        page = 1;
+      }
+    } else {
+      let cached = await AlbumDao.loadFeed(`${prefix}${page}`);
+      if (cached.sections.length > 0 && cached.sections[0].albums.length > 0) {
+        await this.renderFavoritesFromStore();
+        this.favHasMore = cached.sections[0].albums.length >= PAGE_SIZE_FAVORITE;
+        this.favIsLoading = false;
+        return;
+      }
+    }
+    // 2. 本地缺失才走网络
     try {
-      let resp = await this.apiService.getFavorites(this.favCurrentPage, this.favCurrentFolderId);
+      let resp = await this.apiService.getFavorites(page, this.favCurrentFolderId);
       if (resp.code === 200 && resp.data) {
         let pageData = resp.data;
         this.favTotal = pageData.total;
-        this.favFolders = pageData.folder_list || [];
-        let vms = pageData.list.map((item: FavoriteAlbumItem) => {
-          let vm = new AlbumViewModel();
-          vm.id = parseInt(item.id);
-          vm.name = item.name;
-          vm.author = Array.isArray(item.author) ? item.author.join(', ') : item.author;
-          vm.description = item.description;
-          vm.category = item.category?.title || '';
-          vm.coverUrl = this.apiService.buildCoverUrl(vm.id);
-          return vm;
-        });
-        // 去重合并：避免 ForEach key 重复
-        let map = new Map<number, AlbumViewModel>();
-        for (let vm of this.favAlbums) { map.set(vm.id, vm); }
-        for (let vm of vms) { map.set(vm.id, vm); }
-        this.favAlbums = Array.from(map.values());
-        this.favHasMore = vms.length >= PAGE_SIZE_FAVORITE;
+        // 3. 先落库（收藏夹清单单独存一条），再从库读回来渲染
+        let items: RespJmAlbumInfo[] = pageData.list.map((item: FavoriteAlbumItem) => this.favoriteToInfo(item));
+        await AlbumDao.saveFeed(`${prefix}${page}`, items, pageData.total);
+        if (this.cache) {
+          this.cache.saveFavoriteFolders(this.loadedUsername, pageData.folder_list || []);
+        }
+        await this.renderFavoritesFromStore();
+        this.favHasMore = pageData.list.length >= PAGE_SIZE_FAVORITE;
       }
     } catch (err) {
       console.error('[ProfilePage] loadFavorites error:', JSON.stringify(err));
@@ -394,31 +648,141 @@ struct ProfilePage {
     this.loadFavorites();
   }
 
+  /** 观看历史在库里的分页前缀（按账号隔离） */
+  private watchPrefix(): string {
+    return `watch:${this.loadedUsername}:p`;
+  }
+
+  /** 从库里读出全部已落库的历史页并渲染 */
+  private async renderWatchFromStore(): Promise<boolean> {
+    let snapshots = await AlbumDao.loadFeedPages(this.watchPrefix());
+    let albums: AlbumViewModel[] = [];
+    this.watchLocalUpdatedAt = 0;
+    for (let snapshot of snapshots) {
+      this.watchLocalUpdatedAt = Math.max(this.watchLocalUpdatedAt, snapshot.updatedAt);
+      if (snapshot.sections.length === 0) continue;
+      for (let album of snapshot.sections[0].albums) {
+        albums.push(AlbumViewModel.fromAlbum(album,
+          this.apiService.coverSource(album.id, '_3x4', album.imageName)));
+      }
+    }
+    this.watchAlbums = albums;
+    this.watchTotal = albums.length;
+    return albums.length > 0;
+  }
+
+  /** 收藏 / 历史本地数据是否过期（间隔与开关都由设置页控制） */
+  private isFavStale(): boolean {
+    return Date.now() - this.favLocalUpdatedAt > CacheManager.feedTtlMsOf(CacheManager.REFRESH_PROFILE);
+  }
+
+  private isWatchStale(): boolean {
+    return Date.now() - this.watchLocalUpdatedAt > CacheManager.feedTtlMsOf(CacheManager.REFRESH_PROFILE);
+  }
+
+  onFeedRefreshTick(): void {
+    if (!this.isLoggedIn) return;
+    this.loadFavorites();
+    this.loadWatchHistory();
+  }
+
+  /**
+   * 下拉刷新：收藏与历史都从第一页重拉。
+   * 未登录时没有可刷新的数据，直接收掉指示器，不发请求。
+   * 与首页同款：不清 favAlbums / watchAlbums，也不置 favIsLoading / watchIsLoading，
+   * 旧内容留在屏上，落库后由 renderXxxFromStore 整体替换。
+   */
+  private async pullRefresh(): Promise<void> {
+    if (!this.isLoggedIn || this.isPulling) {
+      this.isRefreshing = false;
+      return;
+    }
+    this.isPulling = true;
+    let failed = true;
+    try {
+      let favPrefix = this.favPrefix();
+      let favResp = await this.apiService.getFavorites(1, this.favCurrentFolderId);
+      if (favResp.code === 200 && favResp.data) {
+        let pageData = favResp.data;
+        let items: RespJmAlbumInfo[] = pageData.list.map((item: FavoriteAlbumItem) => this.favoriteToInfo(item));
+        // 旧分页不再对应这份收藏夹，整批作废后只写新的第一页
+        await AlbumDao.clearFeedPrefix(favPrefix);
+        await AlbumDao.saveFeedKeepList(`${favPrefix}1`, items, pageData.total);
+        this.favTotal = pageData.total;
+        this.favCurrentPage = 1;
+        this.favHasMore = pageData.list.length >= PAGE_SIZE_FAVORITE;
+        if (this.cache) {
+          this.cache.saveFavoriteFolders(this.loadedUsername, pageData.folder_list || []);
+        }
+        await this.renderFavoritesFromStore();
+        failed = false;
+      }
+
+      let watchPrefix = this.watchPrefix();
+      let watchResp = await this.apiService.getWatchList(1);
+      if (watchResp.code === 200 && watchResp.data) {
+        let items: RespJmAlbumInfo[] = watchResp.data.list;
+        await AlbumDao.clearFeedPrefix(watchPrefix);
+        await AlbumDao.saveFeedKeepList(`${watchPrefix}1`, items, -1);
+        this.watchCurrentPage = 1;
+        this.watchHasMore = items.length > 0;
+        await this.renderWatchFromStore();
+        failed = false;
+      }
+      if (failed) {
+        this.getUIContext().getPromptAction().showToast({ message: '刷新失败，已保留本地内容', duration: 2000 });
+      }
+    } catch (err) {
+      console.error('[ProfilePage] pull refresh error:', JSON.stringify(err));
+      this.getUIContext().getPromptAction().showToast({ message: '刷新失败，已保留本地内容', duration: 2000 });
+    } finally {
+      this.isPulling = false;
+      this.isRefreshing = false;
+    }
+  }
+
   async loadWatchHistory(): Promise<void> {
     if (this.watchIsLoading) return;
+    // 一进函数就置加载态：读库这几毫秒也别让用户看到空历史
     this.watchIsLoading = true;
     this.watchLoadFailed = false;
+    let prefix = this.watchPrefix();
+    let page = this.watchCurrentPage;
+    // 1. 本地优先
+    if (page === 1) {
+      let hasLocal = await this.renderWatchFromStore();
+      if (hasLocal && !this.isWatchStale()) {
+        let pages = await AlbumDao.feedPageNumbers(prefix);
+        this.watchCurrentPage = pages.length > 0 ? pages[pages.length - 1] : 1;
+        this.watchIsLoading = false;
+        return;
+      }
+      if (hasLocal) {
+        // 过期：历史整体作废，从第一页重拉
+        await AlbumDao.clearFeedPrefix(prefix);
+        this.watchAlbums = [];
+        this.watchCurrentPage = 1;
+        page = 1;
+      }
+    } else {
+      let cached = await AlbumDao.loadFeed(`${prefix}${page}`);
+      if (cached.sections.length > 0 && cached.sections[0].albums.length > 0) {
+        await this.renderWatchFromStore();
+        this.watchHasMore = cached.sections[0].albums.length > 0;
+        this.watchIsLoading = false;
+        return;
+      }
+    }
+    // 2. 本地缺失才走网络
     try {
-      let resp = await this.apiService.getWatchList(this.watchCurrentPage);
+      let resp = await this.apiService.getWatchList(page);
       if (resp.code === 200 && resp.data) {
-        let vms = resp.data.list.map((item: RespJmAlbumInfo) => {
-          let vm = AlbumViewModel.fromApiInfo(item, '');
-          vm.coverUrl = this.apiService.buildCoverUrl(vm.id);
-          return vm;
-        });
-        // 去重合并：历史记录同一漫画可能出现在多页
-        let map = new Map<number, AlbumViewModel>();
-        for (let vm of this.watchAlbums) { map.set(vm.id, vm); }
-        let newCount = 0;
-        for (let vm of vms) {
-          if (!map.has(vm.id)) {
-            map.set(vm.id, vm);
-            newCount++;
-          }
-        }
-        this.watchAlbums = Array.from(map.values());
+        let items = resp.data.list;
+        // 3. 先落库，再从库读回来渲染
+        await AlbumDao.saveFeed(`${prefix}${page}`, items, -1);
+        await this.renderWatchFromStore();
         // 无新数据时停止加载
-        this.watchHasMore = newCount > 0;
+        this.watchHasMore = items.length > 0;
       }
     } catch (err) {
       console.error('[ProfilePage] loadWatchHistory error:', JSON.stringify(err));
@@ -574,6 +938,10 @@ struct ProfilePage {
     });
     this.watchTotal = this.watchAlbums.length;
 
+    // 服务端已变更：作废本地历史分页，下次读取重新联网拉取
+    await AlbumDao.clearFeedPrefix(this.watchPrefix());
+    this.watchCurrentPage = 1;
+
     if (failed.size === 0) {
       this.getUIContext().getPromptAction().showToast({ message: `已删除 ${count} 条观看记录`, duration: 2000 });
       this.exitWatchSelectMode();
@@ -599,6 +967,7 @@ struct ProfilePage {
   }
 
   build() {
+    Refresh({ refreshing: $$this.isRefreshing }) {
     Scroll(this.outerScroller) {
       Column() {
         if (this.isLoggedIn) {
@@ -971,6 +1340,12 @@ struct ProfilePage {
     .height('100%')
     .scrollBar(BarState.Off)
     .backgroundColor($r('app.color.bg_page'))
+    }
+    .onRefreshing(() => {
+      this.pullRefresh();
+    })
+    .width('100%')
+    .height('100%')
   }
 
   /** 下载管理入口卡片：与设置入口同款式，置于设置上方（下载功能无需登录） */
@@ -1123,17 +1498,28 @@ struct ProfilePage {
 @Component
 struct CategoryPage {
   @State albums: AlbumViewModel[] = [];
-  @State isLoading: boolean = false;
+  // 初值 true：首次安装库为空时，读库这几毫秒也要有加载指示而不是空白
+  @State isLoading: boolean = true;
   @State currentPage: number = 1;
   @State hasMore: boolean = true;
   @State currentCategory: string = CATEGORY_ALL;
   @State currentOrder: string = ORDER_BY_LATEST;
   @State searchKeyword: string = '';
   @State loadFailed: boolean = false;
+  /** 下拉刷新指示器：用户显式拉取，与首屏 isLoading 分开 */
+  @State isRefreshing: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
+  /** 设置页改了刷新间隔 / 切回分类页时递增，按新的 TTL 重新判断 */
+  @StorageProp('feedRefreshTick') @Watch('onFeedRefreshTick') feedRefreshTick: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private cache: CacheManager | null = null;
+  /** 本地列表最近一次落库时间，用来判断是否过期 */
+  private localUpdatedAt: number = 0;
+  /** 当前分类+排序在库里的分页前缀：cat:{分类}:{排序}:p */
+  private pagePrefix: string = '';
+  /** 下拉刷新是否已有一轮在跑：Refresh 只管指示器，挡不住重复触发 */
+  private isPulling: boolean = false;
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
 
   // 分类标签数据
@@ -1161,77 +1547,96 @@ struct CategoryPage {
 
   async aboutToAppear(): Promise<void> {
     this.cache = await CacheManager.getInstance();
-    // 先尝试从缓存加载
-    let loaded = await this.loadFromCache();
-    if (!loaded) {
-      await this.loadAlbums();
-    }
+    this.rebuildPagePrefix();
+    await this.loadFirstPage();
   }
 
-  /** 从本地缓存加载已有数据 */
-  async loadFromCache(): Promise<boolean> {
-    if (!this.cache) return false;
-    let cachedPages = this.cache.getCategoryPages(this.currentCategory, this.currentOrder);
-    if (cachedPages.length === 0) return false;
+  private rebuildPagePrefix(): void {
+    this.pagePrefix = `cat:${this.currentCategory}:${this.currentOrder}:p`;
+  }
 
-    let allAlbums: AlbumViewModel[] = [];
-    for (let p of cachedPages.sort((a, b) => a - b)) {
-      let entry = this.cache.loadCategoryList(this.currentCategory, this.currentOrder, p);
-      if (entry) {
-        let items = AlbumViewModel.fromJSONArray(JSON.parse(entry.data) as IAlbumViewModelJSON[]);
-        allAlbums = allAlbums.concat(items);
+  /** 首屏：先读库回放，本地缺失或过期才联网 */
+  private async loadFirstPage(): Promise<void> {
+    this.loadFailed = false;
+    let hasLocal = await this.renderFromStore();
+    if (hasLocal && !this.isStale()) {
+      this.isLoading = false;
+      let pages = await AlbumDao.feedPageNumbers(this.pagePrefix);
+      this.currentPage = pages.length > 0 ? pages[pages.length - 1] : 1;
+      return;
+    }
+    if (hasLocal) {
+      // 过期：整列表作废回第一页重拉，避免新旧分页拼在一起
+      this.isLoading = true;
+      await AlbumDao.clearFeedPrefix(this.pagePrefix);
+      this.albums = [];
+    }
+    this.currentPage = 1;
+    await this.loadAlbums();
+  }
+
+  /** 本地列表是否过期（间隔与开关都由设置页控制） */
+  private isStale(): boolean {
+    return Date.now() - this.localUpdatedAt > CacheManager.feedTtlMsOf(CacheManager.REFRESH_CATEGORY);
+  }
+
+  onFeedRefreshTick(): void {
+    if (this.isLoading) return;
+    this.loadFirstPage();
+  }
+
+  /** 从库里读出全部分页并渲染 */
+  private async renderFromStore(): Promise<boolean> {
+    let snapshots = await AlbumDao.loadFeedPages(this.pagePrefix);
+    let albums: AlbumViewModel[] = [];
+    this.localUpdatedAt = 0;
+    for (let snapshot of snapshots) {
+      this.localUpdatedAt = Math.max(this.localUpdatedAt, snapshot.updatedAt);
+      if (snapshot.sections.length === 0) continue;
+      for (let album of snapshot.sections[0].albums) {
+        albums.push(AlbumViewModel.fromAlbum(album,
+          this.apiService.coverSource(album.id, '_3x4', album.imageName)));
       }
     }
-    if (allAlbums.length === 0) return false;
-
-    this.albums = allAlbums;
-    this.currentPage = cachedPages.length;
-    this.hasMore = allAlbums.length >= 20;
-    return true;
-  }
-
-  /** 保存数据到缓存 */
-  saveToCache(page: number, vms: AlbumViewModel[], total: number): void {
-    if (!this.cache) return;
-    let data = JSON.stringify(vms.map(vm => vm.toJSON()));
-    this.cache.saveCategoryList(this.currentCategory, this.currentOrder, page, data, total);
-    this.cache.saveLastCategory(this.currentCategory);
-    this.cache.saveLastOrder(this.currentOrder);
+    this.albums = albums;
+    return albums.length > 0;
   }
 
   async loadAlbums(): Promise<void> {
-    if (this.isLoading) return;
+    // 是否在加载由调用方（loadMore / tryAutoLoad）判断：这里不能再挡，
+    // 否则首屏进网络分支时 isLoading 已是 true，会被自己拦死
+    let page = this.currentPage;
+    let pageKey = `${this.pagePrefix}${page}`;
+    // 1. 本地已有这一页：直接用
+    let cached = await AlbumDao.loadFeed(pageKey);
+    if (cached.sections.length > 0 && cached.sections[0].albums.length > 0) {
+      await this.renderFromStore();
+      this.hasMore = cached.sections[0].albums.length >= 20;
+      this.isLoading = false;
+      return;
+    }
+    // 2. 本地缺失才走网络
     this.isLoading = true;
     this.loadFailed = false;
-
     try {
       let resp = await this.apiService.getCategoryList(
         this.currentCategory,
         this.currentOrder,
-        this.currentPage
+        page
       );
 
       console.info(`[CategoryPage] getCategoryList resp: code=${resp.code}, data type=${typeof resp.data}`);
       if (resp.code === 200 && resp.data) {
         let data = resp.data as SearchResultData;
         console.info(`[CategoryPage] data.total=${data.total}, content length=${data.content?.length}`);
-        let list = data.content;
-        let vms = list.map(item => {
-          let vm = AlbumViewModel.fromApiInfo(item, '');
-          vm.coverUrl = this.apiService.buildCoverUrl(vm.id);
-          return vm;
-        });
-
-        if (this.currentPage === 1) {
-          this.albums = vms;
-        } else {
-          this.albums = this.albums.concat(vms);
+        // 3. 先落库，再从库读回来渲染
+        await AlbumDao.saveFeed(pageKey, data.content, parseInt(data.total) || 0);
+        if (this.cache) {
+          this.cache.saveLastCategory(this.currentCategory);
+          this.cache.saveLastOrder(this.currentOrder);
         }
-
-        this.hasMore = vms.length >= 20;
-
-        // 保存到本地缓存
-        this.saveToCache(this.currentPage, vms, parseInt(data.total) || 0);
+        await this.renderFromStore();
+        this.hasMore = data.content.length >= 20;
       } else {
         console.error(`[CategoryPage] getCategoryList failed: code=${resp.code}, message=${resp.message}`);
         this.loadFailed = true;
@@ -1250,10 +1655,9 @@ struct CategoryPage {
     this.currentPage = 1;
     this.hasMore = true;
     this.albums = [];
-    let loaded = await this.loadFromCache();
-    if (!loaded) {
-      await this.loadAlbums();
-    }
+    this.isLoading = true;
+    this.rebuildPagePrefix();
+    await this.loadFirstPage();
   }
 
   async onOrderChange(order: string): Promise<void> {
@@ -1262,16 +1666,49 @@ struct CategoryPage {
     this.currentPage = 1;
     this.hasMore = true;
     this.albums = [];
-    let loaded = await this.loadFromCache();
-    if (!loaded) {
-      await this.loadAlbums();
-    }
+    this.isLoading = true;
+    this.rebuildPagePrefix();
+    await this.loadFirstPage();
   }
 
   loadMore(): void {
     if (!this.hasMore || this.isLoading) return;
     this.currentPage++;
     this.loadAlbums();
+  }
+
+  /**
+   * 下拉刷新：当前分类 / 排序从第一页重拉。
+   * 不走 TTL、不看自动刷新开关，这是用户的显式动作。
+   * 与首页同款：旧内容留在屏上，落库后再由 renderFromStore 整体替换，
+   * 中间不置 isLoading、不清 albums，避免拉取期间整页闪成加载态。
+   */
+  private async pullRefresh(): Promise<void> {
+    if (this.isPulling) {
+      this.isRefreshing = false;
+      return;
+    }
+    this.isPulling = true;
+    try {
+      let resp = await this.apiService.getCategoryList(this.currentCategory, this.currentOrder, 1);
+      let data = resp.code === 200 && resp.data ? resp.data as SearchResultData : null;
+      if (data === null) {
+        this.getUIContext().getPromptAction().showToast({ message: '刷新失败，已保留本地内容', duration: 2000 });
+        return;
+      }
+      // 旧分页不再对应这份列表，整批作废后只写新的第一页
+      await AlbumDao.clearFeedPrefix(this.pagePrefix);
+      await AlbumDao.saveFeedKeepList(`${this.pagePrefix}1`, data.content, parseInt(data.total) || 0);
+      this.currentPage = 1;
+      this.hasMore = data.content.length >= 20;
+      await this.renderFromStore();
+    } catch (err) {
+      console.error('[CategoryPage] pull refresh error:', JSON.stringify(err));
+      this.getUIContext().getPromptAction().showToast({ message: '刷新失败，已保留本地内容', duration: 2000 });
+    } finally {
+      this.isPulling = false;
+      this.isRefreshing = false;
+    }
   }
 
   buildAvatarUrl(): string {
@@ -1339,6 +1776,7 @@ struct CategoryPage {
           .height('100%')
           .justifyContent(FlexAlign.Center)
         } else {
+          Refresh({ refreshing: $$this.isRefreshing }) {
           Scroll() {
             Column() {
               Grid() {
@@ -1394,6 +1832,12 @@ struct CategoryPage {
           .scrollBar(BarState.Off)
           .padding({ top: this.topSafeHeight + 172 })
           .onReachEnd(() => this.loadMore())
+          }
+          .onRefreshing(() => {
+            this.pullRefresh();
+          })
+          .width('100%')
+          .height('100%')
         }
       }
       .width('100%')
@@ -1530,8 +1974,12 @@ struct ForumPage {
   @State hasMore: boolean = true;
   @State currentMode: string = COMMENT_MODE_ALL;
   @State loadFailed: boolean = false;
+  /** 下拉刷新指示器：用户显式拉取，与首屏 isLoading 分开 */
+  @State isRefreshing: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
+  /** 设置页改了刷新间隔 / 切回讨论区时递增，按新的 TTL 重新判断 */
+  @StorageProp('feedRefreshTick') @Watch('onFeedRefreshTick') feedRefreshTick: number = 0;
   private apiService: ApiService = ApiService.getInstance();
 
   private modes: ForumModeItem[] = [
@@ -1540,18 +1988,63 @@ struct ForumPage {
     { key: COMMENT_MODE_CHAT, label: COMMENT_MODE_NAME_MAP[COMMENT_MODE_CHAT] } as ForumModeItem,
   ];
 
+  private cache: CacheManager | null = null;
+  /** 下拉刷新是否已有一轮在跑：Refresh 只管指示器，挡不住重复触发 */
+  private isPulling: boolean = false;
+
   async aboutToAppear(): Promise<void> {
+    this.cache = await CacheManager.getInstance();
     await this.loadComments();
   }
 
+  onFeedRefreshTick(): void {
+    if (this.isLoading || this.isLoadingMore) return;
+    this.loadComments();
+  }
+
+  /** 论坛评论按模式分别缓存，ownerId 固定为 forum */
+  private renderFromStore(): boolean {
+    if (!this.cache) return false;
+    let comments: CommentInfo[] = [];
+    let total = 0;
+    for (let page of this.cache.getCommentPages(this.currentMode, 'forum')) {
+      let entry = this.cache.loadCommentPage(this.currentMode, 'forum', page);
+      if (entry === null) continue;
+      total = Math.max(total, entry.total);
+      let raws = JSON.parse(entry.data) as CommentInfoRaw[];
+      for (let raw of raws) {
+        comments.push(parseCommentRaw(raw));
+      }
+    }
+    this.comments = comments;
+    if (total > 0) {
+      this.totalComments = total;
+    }
+    this.hasMore = this.comments.length < this.totalComments;
+    return comments.length > 0;
+  }
+
   async loadComments(): Promise<void> {
-    this.isLoading = true;
     this.loadFailed = false;
+    // 1. 本地优先
+    if (this.renderFromStore()) {
+      this.isLoading = false;
+      return;
+    }
+    // 2. 本地缺失才走网络
+    this.isLoading = true;
     try {
-      let data: CommentPageData = await this.apiService.getComments(this.currentMode, '', this.currentPage);
-      this.totalComments = data.total;
-      this.comments = (data.list || []).map((raw) => parseCommentRaw(raw));
-      this.hasMore = this.comments.length < this.totalComments;
+      let page = this.currentPage;
+      let data: CommentPageData = await this.apiService.getComments(this.currentMode, '', page);
+      // 3. 先落库，再从库读回来渲染
+      if (this.cache) {
+        this.cache.saveCommentPage(this.currentMode, 'forum', page, JSON.stringify(data.list || []), data.total);
+      }
+      if (!this.renderFromStore()) {
+        this.totalComments = data.total;
+        this.comments = (data.list || []).map((raw) => parseCommentRaw(raw));
+        this.hasMore = this.comments.length < this.totalComments;
+      }
     } catch (err) {
       console.error('[ForumPage] loadComments error:', JSON.stringify(err));
       this.loadFailed = true;
@@ -1562,17 +2055,28 @@ struct ForumPage {
 
   async loadMoreComments(): Promise<void> {
     if (!this.hasMore || this.isLoadingMore) return;
-    this.isLoadingMore = true;
     this.loadFailed = false;
-    this.currentPage++;
+    let page = this.currentPage + 1;
+    // 1. 本地已有这一页：直接用
+    if (this.cache && this.cache.loadCommentPage(this.currentMode, 'forum', page) !== null) {
+      this.currentPage = page;
+      this.renderFromStore();
+      return;
+    }
+    // 2. 本地缺失才走网络
+    this.isLoadingMore = true;
     try {
-      let data: CommentPageData = await this.apiService.getComments(this.currentMode, '', this.currentPage);
-      let newComments = (data.list || []).map((raw) => parseCommentRaw(raw));
-      this.comments = this.comments.concat(newComments);
-      this.hasMore = this.comments.length < this.totalComments;
+      let data: CommentPageData = await this.apiService.getComments(this.currentMode, '', page);
+      if (this.cache) {
+        this.cache.saveCommentPage(this.currentMode, 'forum', page, JSON.stringify(data.list || []), data.total);
+      }
+      this.currentPage = page;
+      if (!this.renderFromStore()) {
+        this.comments = this.comments.concat((data.list || []).map((raw) => parseCommentRaw(raw)));
+        this.hasMore = this.comments.length < this.totalComments;
+      }
     } catch (err) {
       console.error('[ForumPage] loadMoreComments error:', JSON.stringify(err));
-      this.currentPage--;
       this.loadFailed = true;
     } finally {
       this.isLoadingMore = false;
@@ -1586,6 +2090,38 @@ struct ForumPage {
     this.comments = [];
     this.hasMore = true;
     await this.loadComments();
+  }
+
+  /**
+   * 下拉刷新：当前模式的评论从第一页重拉。
+   * 不走 TTL，也不清 this.comments：旧内容留在屏上，落库后由 renderFromStore 整体替换。
+   * 旧分页整批作废，否则新第 1 页会和旧分页拼出重复条目（ForEach 用 comment.id 做 key）。
+   */
+  private async pullRefresh(): Promise<void> {
+    if (this.isPulling) {
+      this.isRefreshing = false;
+      return;
+    }
+    this.isPulling = true;
+    try {
+      let data: CommentPageData = await this.apiService.getComments(this.currentMode, '', 1);
+      this.cache?.clearCommentPages(this.currentMode, 'forum');
+      if (this.cache) {
+        this.cache.saveCommentPage(this.currentMode, 'forum', 1, JSON.stringify(data.list || []), data.total);
+      }
+      this.currentPage = 1;
+      if (!this.renderFromStore()) {
+        this.totalComments = data.total;
+        this.comments = (data.list || []).map((raw) => parseCommentRaw(raw));
+        this.hasMore = this.comments.length < this.totalComments;
+      }
+    } catch (err) {
+      console.error('[ForumPage] pull refresh error:', JSON.stringify(err));
+      this.getUIContext().getPromptAction().showToast({ message: '刷新失败，已保留本地内容', duration: 2000 });
+    } finally {
+      this.isPulling = false;
+      this.isRefreshing = false;
+    }
   }
 
   build() {
@@ -1657,6 +2193,7 @@ struct ForumPage {
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
       } else {
+        Refresh({ refreshing: $$this.isRefreshing }) {
         Scroll() {
           Column() {
             ForEach(this.comments, (comment: CommentInfo, index: number) => {
@@ -1723,6 +2260,12 @@ struct ForumPage {
             this.loadMoreComments();
           }
         })
+        }
+        .onRefreshing(() => {
+          this.pullRefresh();
+        })
+        .layoutWeight(1)
+        .width('100%')
       }
     }
     .width('100%')
@@ -1795,23 +2338,71 @@ struct Index {
   async aboutToAppear(): Promise<void> {
     // 注册全局导航栈（须早于任何子组件的跳转调用）
     AppStorage.setOrCreate('navPathStack', this.pathStack);
-    // 自动登录：多账号管理器取活跃账号的凭据
+    // 冷启动恢复登录态，分两步：
+    // 1) 用本地会话快照先点亮界面——首页/个人中心一进来就是已登录，不等网络
+    // 2) 后台静默登录复验；失败则退回未登录态（快照与内存会话一起清）
+    let accountManager = AccountManager.getInstance();
     try {
-      let accountManager = AccountManager.getInstance();
       await accountManager.init();
-      let creds = accountManager.getActiveCredentials();
-      if (creds) {
-        console.info('[Index] 尝试自动登录, username=' + creds.username);
-        let session = await this.apiService.login(creds.username, creds.password);
-        // 回填头像/等级等信息到账号条目
-        await accountManager.recordLogin(creds.username, creds.password, session, true);
-        console.info('[Index] 自动登录成功');
-      }
     } catch (err) {
-      console.warn('[Index] 自动登录失败:', JSON.stringify(err));
+      console.warn('[Index] account init failed:', JSON.stringify(err));
+    }
+    // 用户关掉「自动登录」时，快照与凭据都不参与启动，直接停在未登录
+    let autoLogin = accountManager.isAutoLoginEnabled();
+    let snapshot = autoLogin ? accountManager.loadSessionSnapshot() : null;
+    let creds = autoLogin ? accountManager.getActiveCredentials() : null;
+    // 必须先置 pending 再点亮登录态：isLoggedIn 的 @Watch 是同步触发的，
+    // 晚一步个人中心就会拿着未复验的会话去拉收藏
+    if (creds !== null) {
+      AppStorage.setOrCreate('sessionPending', true);
+    }
+    if (snapshot !== null) {
+      this.apiService.adoptSession(snapshot);
+    }
+    if (creds !== null) {
+      // 不 await：复验走后台，慢网络也不拖住首屏
+      this.silentLogin(accountManager, creds);
+    } else if (snapshot !== null) {
+      // 有快照却没留密码（未勾选「记住密码」），无法复验，直接回到未登录
+      accountManager.clearSessionSnapshot();
+      this.apiService.logout();
     }
     // 后台按用户设置清理图片仓库中的过期章节（不阻塞首屏）
     this.autoCleanupLibrary();
+  }
+
+  /**
+   * 后台静默登录：用保存的凭据重新登录，成功刷新会话与快照，失败退回未登录。
+   *
+   * 复验期间置 sessionPending，个人中心等页面据此暂缓发起需要登录的请求，
+   * 避免拿尚未验证的会话打空枪。
+   */
+  private async silentLogin(accountManager: AccountManager, creds: ActiveCredentials): Promise<void> {
+    AppStorage.setOrCreate('sessionPending', true);
+    try {
+      console.info('[Index] 静默登录开始, username=' + creds.username);
+      let session = await this.apiService.login(creds.username, creds.password);
+      // 回填头像/等级等信息到账号条目，同时刷新会话快照
+      await accountManager.recordLogin(creds.username, creds.password, session, true);
+      console.info('[Index] 静默登录成功');
+    } catch (err) {
+      console.warn('[Index] 静默登录失败，回到未登录态:', JSON.stringify(err));
+      let msg = (err as Error).message || '';
+      let networkIssue = msg.includes('网络') || msg.includes('超时');
+      // 网络问题不代表凭据失效：快照留着，联网恢复后下次启动仍能直接亮起
+      if (!networkIssue) {
+        accountManager.clearSessionSnapshot();
+      }
+      this.apiService.logout();
+      let hint = networkIssue ? '网络异常，已切换为未登录' : '登录已失效，请重新登录';
+      try {
+        this.getUIContext().getPromptAction().showToast({ message: hint, duration: 2000 });
+      } catch (e) {
+        console.error('[Index] showToast error:', JSON.stringify(e));
+      }
+    } finally {
+      AppStorage.setOrCreate('sessionPending', false);
+    }
   }
 
   /** 冷启动后台清理：阅读缓存按设置天数、已导出内容按设置天数，手动下载未导出内容不动 */
@@ -2021,6 +2612,9 @@ struct Index {
         .height('100%')
         .onChange((index: number) => {
           this.currentIndex = index;
+          // 切页时让常驻列表页按 TTL 重判一次；未过期列表内部会直接返回，不发请求
+          let tick: number = AppStorage.get<number>('feedRefreshTick') ?? 0;
+          AppStorage.setOrCreate('feedRefreshTick', tick + 1);
         })
       } else {
         // Fallback for unsupported SystemCapability

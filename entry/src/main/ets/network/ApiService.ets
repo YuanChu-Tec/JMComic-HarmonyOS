@@ -1,6 +1,7 @@
 import { HttpClient } from './HttpClient';
 import { DomainManager } from './DomainManager';
 import { CryptoUtils } from '../common/CryptoUtils';
+import { ComicLibrary } from '../common/ComicLibrary';
 import {
   DOMAIN_API_LIST,
   DOMAIN_IMAGE_LIST,
@@ -179,6 +180,20 @@ export class ApiService {
    */
   buildCoverUrl(albumId: string | number, size: string = '_3x4'): string {
     return `${this.getImageBaseUrl()}/media/albums/${albumId}${size}.jpg`;
+  }
+
+  /**
+   * 封面来源：本地有当前版本的图就用 file://，没有才回退网络并后台落盘。
+   * 列表、详情、下载管理页统一走这里，离线时仍有封面。
+   * image_name 是封面版本标识：设置页「刷新内容·封面」开启时，服务器换名即换文件；
+   * 关闭时忽略它，永久沿用本地旧图。拿不到封面名的调用方传空串即可。
+   */
+  coverSource(albumId: string | number, size: string = '_3x4', imageName: string = ''): string {
+    let local = ComicLibrary.coverLocalUri(albumId, size, imageName);
+    if (local !== '') return local;
+    let url = this.buildCoverUrl(albumId, size);
+    ComicLibrary.ensureCover(albumId, size, url, imageName);
+    return url;
   }
 
   // ─── 核心请求方法（带域名故障转移） ───
@@ -718,6 +733,17 @@ export class ApiService {
    */
   getUserSession(): UserSession {
     return this.userSession;
+  }
+
+  /**
+   * 采用本地会话快照：冷启动先用它点亮登录态，服务端有效性由随后的静默登录复验。
+   *
+   * 与 login() 的区别是纯本地、不发请求、不碰 cookie，因此只是「显示上已登录」。
+   */
+  adoptSession(session: UserSession): void {
+    this.userSession = session;
+    AppStorage.setOrCreate('isLoggedIn', true);
+    console.info('[ApiService] adopt local session: username=' + session.username);
   }
 
   /**

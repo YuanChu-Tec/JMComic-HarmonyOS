@@ -8,6 +8,9 @@
 export const SECTION_SOURCE_LATEST: string = 'latest';
 export const SECTION_SOURCE_PROMOTE: string = 'promote';
 
+/** 分区「更多」页的分页键前缀（后接 源列表:分区:p页码）；首页下拉刷新后整族作废 */
+export const MORE_FEED_PREFIX: string = 'more:';
+
 // API 域名列表 (与 JMComic-qt Url2List 保持一致)
 export const DOMAIN_API_LIST: string[] = [
   'www.cdnhth.club',

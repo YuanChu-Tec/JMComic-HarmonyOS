@@ -14,6 +14,7 @@ struct LoginPage {
   @State isLoading: boolean = false;
   @State errorMsg: string = '';
   @State savePassword: boolean = true;
+  @State autoLogin: boolean = true;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private apiService: ApiService = ApiService.getInstance();
@@ -33,11 +34,16 @@ struct LoginPage {
       // 预填活跃账号的凭据（多账号管理器持久化数据）
       let accountManager = AccountManager.getInstance();
       await accountManager.init();
+      this.autoLogin = accountManager.isAutoLoginEnabled();
       let active = accountManager.getActiveAccount();
       if (active) {
         this.username = active.username;
         this.password = active.password;
         this.savePassword = !!active.password;
+        // 没存密码就没有可供自动登录的凭据，开关跟着关
+        if (!this.savePassword) {
+          this.autoLogin = false;
+        }
       }
     } catch (err) {
       // preferences not available, use defaults
@@ -91,6 +97,30 @@ struct LoginPage {
     } finally {
       this.isLoading = false;
     }
+  }
+
+  /**
+   * 两个开关是联动的：自动登录要靠保存的密码，所以
+   * 开自动登录 → 连带打开记住密码；关记住密码 → 连带关掉自动登录。
+   */
+  private toggleSavePassword(): void {
+    this.savePassword = !this.savePassword;
+    if (!this.savePassword) {
+      this.applyAutoLogin(false);
+    }
+  }
+
+  private toggleAutoLogin(): void {
+    this.applyAutoLogin(!this.autoLogin);
+  }
+
+  /** 立即落库：用户可能只切换开关、不点登录就返回 */
+  private applyAutoLogin(enabled: boolean): void {
+    this.autoLogin = enabled;
+    if (enabled) {
+      this.savePassword = true;
+    }
+    AccountManager.getInstance().setAutoLoginEnabled(enabled);
   }
 
   onBack(): void {
@@ -180,7 +210,23 @@ struct LoginPage {
         .margin({ top: 12 })
         .justifyContent(FlexAlign.Start)
         .padding({ top: 8, bottom: 8 })
-        .onClick(() => this.savePassword = !this.savePassword)
+        .onClick(() => this.toggleSavePassword())
+
+        // 自动登录：下次冷启动直接用保存的凭据登录（关闭记住密码会连带关掉）
+        Row() {
+          Toggle({ type: ToggleType.Switch, isOn: this.autoLogin })
+            .selectedColor($r('app.color.brand'))
+            .hitTestBehavior(HitTestMode.None)
+
+          Text('自动登录')
+            .fontSize(13)
+            .fontColor($r('app.color.text_tertiary'))
+            .margin({ left: 8 })
+        }
+        .width('85%')
+        .justifyContent(FlexAlign.Start)
+        .padding({ top: 8, bottom: 8 })
+        .onClick(() => this.toggleAutoLogin())
 
         // 错误消息
         if (this.errorMsg) {

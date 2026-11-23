@@ -1,7 +1,8 @@
 import { ApiService } from '../network/ApiService';
-import { parseCommentRaw } from '../models/ComicAlbumRealtime';
-import { CommentPageData } from '../models/dto/ApiDto';
-import { CommentInfo } from '../models/ComicAlbumRealtime';
+import { parseCommentRaw } from '../models/ComicAlbum';
+import { CommentPageData, CommentInfoRaw } from '../models/dto/ApiDto';
+import { CommentInfo } from '../models/ComicAlbum';
+import { CacheManager } from '../common/CacheManager';
 import { CommentItemComponent } from '../common/CommentItem';
 import { navPop } from '../common/NavHelper';
 import { CommentPageParams } from '../common/RouteParams';
@@ -17,19 +18,51 @@ struct AlbumCommentPage {
   @State sendText: string = '';
   @State albumName: string = '评论';
   @State loadFailed: boolean = false;
+  /** 下拉刷新指示器：用户显式拉取，与首屏 isLoading 分开 */
+  @State isRefreshing: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private albumId: number = 0;
   private apiService: ApiService = ApiService.getInstance();
+  private cache: CacheManager | null = null;
+  /** 下拉刷新是否已有一轮在跑：Refresh 只管指示器，挡不住重复触发 */
+  private isPulling: boolean = false;
 
   // NavDestination 标准入口：参数与数据加载移入 onReady（原 router.getParams 时代在 aboutToAppear）
-  private onPageReady(ctx: NavDestinationContext): void {
+  private async onPageReady(ctx: NavDestinationContext): Promise<void> {
     let params = ctx.pathInfo.param as CommentPageParams | null;
     if (params) {
       this.albumId = params.albumId;
       this.albumName = params.albumName || '评论';
     }
-    this.loadComments();
+    this.cache = await CacheManager.getInstance();
+    await this.loadComments();
+  }
+
+  private ownerId(): string {
+    return this.albumId.toString();
+  }
+
+  /** 从库里读出已落库的评论页并拼接渲染，返回本地是否有内容 */
+  private renderFromStore(): boolean {
+    if (!this.cache) return false;
+    let comments: CommentInfo[] = [];
+    let total = 0;
+    for (let page of this.cache.getCommentPages('manhua', this.ownerId())) {
+      let entry = this.cache.loadCommentPage('manhua', this.ownerId(), page);
+      if (entry === null) continue;
+      total = Math.max(total, entry.total);
+      let raws = JSON.parse(entry.data) as CommentInfoRaw[];
+      for (let raw of raws) {
+        comments.push(parseCommentRaw(raw));
+      }
+    }
+    this.comments = comments;
+    if (total > 0) {
+      this.totalComments = total;
+    }
+    this.hasMore = this.comments.length < this.totalComments;
+    return comments.length > 0;
   }
 
   /** Toast 统一走 UIContext 形态（开发规范 §5.5，禁模块级 promptAction 直呼） */
@@ -42,14 +75,60 @@ struct AlbumCommentPage {
     // this.apiService.destroy();
   }
 
-  async loadComments(): Promise<void> {
-    this.isLoading = true;
-    this.loadFailed = false;
+  /**
+   * 下拉刷新：该漫画的评论从第一页重拉。
+   * 与首页同款：不清 this.comments，旧内容留在屏上，落库后由 renderFromStore 整体替换。
+   * 旧分页整批作废，否则新第 1 页会和旧分页拼出重复条目（ForEach 用 comment.id 做 key）。
+   */
+  private async pullRefresh(): Promise<void> {
+    if (this.isPulling) {
+      this.isRefreshing = false;
+      return;
+    }
+    this.isPulling = true;
     try {
-      let data: CommentPageData = await this.apiService.getComments('manhua', this.albumId.toString(), this.currentPage);
-      this.totalComments = data.total;
-      this.comments = (data.list || []).map((raw) => parseCommentRaw(raw));
-      this.hasMore = this.comments.length < this.totalComments;
+      let data: CommentPageData = await this.apiService.getComments('manhua', this.ownerId(), 1);
+      this.cache?.clearCommentPages('manhua', this.ownerId());
+      if (this.cache) {
+        this.cache.saveCommentPage('manhua', this.ownerId(), 1, JSON.stringify(data.list || []), data.total);
+      }
+      this.currentPage = 1;
+      if (!this.renderFromStore()) {
+        this.totalComments = data.total;
+        this.comments = (data.list || []).map((raw) => parseCommentRaw(raw));
+        this.hasMore = this.comments.length < this.totalComments;
+      }
+    } catch (err) {
+      console.error('[AlbumCommentPage] pull refresh error:', JSON.stringify(err));
+      this.showToast('刷新失败，已保留本地内容');
+    } finally {
+      this.isPulling = false;
+      this.isRefreshing = false;
+    }
+  }
+
+  async loadComments(): Promise<void> {
+    this.loadFailed = false;
+    // 1. 本地优先
+    if (this.renderFromStore()) {
+      this.isLoading = false;
+      return;
+    }
+    // 2. 本地缺失才走网络
+    this.isLoading = true;
+    try {
+      let page = this.currentPage;
+      let data: CommentPageData = await this.apiService.getComments('manhua', this.ownerId(), page);
+      // 3. 先落库，再从库读回来渲染
+      if (this.cache) {
+        this.cache.saveCommentPage('manhua', this.ownerId(), page, JSON.stringify(data.list || []), data.total);
+      }
+      if (!this.renderFromStore()) {
+        // 落库不可用时兜底，保证页面有内容
+        this.totalComments = data.total;
+        this.comments = (data.list || []).map((raw) => parseCommentRaw(raw));
+        this.hasMore = this.comments.length < this.totalComments;
+      }
     } catch (err) {
       console.error('[AlbumCommentPage] loadComments error:', JSON.stringify(err));
       this.loadFailed = true;
@@ -60,17 +139,28 @@ struct AlbumCommentPage {
 
   async loadMoreComments(): Promise<void> {
     if (!this.hasMore || this.isLoadingMore) return;
-    this.isLoadingMore = true;
     this.loadFailed = false;
-    this.currentPage++;
+    let page = this.currentPage + 1;
+    // 1. 本地已有这一页：直接用
+    if (this.cache && this.cache.loadCommentPage('manhua', this.ownerId(), page) !== null) {
+      this.currentPage = page;
+      this.renderFromStore();
+      return;
+    }
+    // 2. 本地缺失才走网络
+    this.isLoadingMore = true;
     try {
-      let data: CommentPageData = await this.apiService.getComments('manhua', this.albumId.toString(), this.currentPage);
-      let newComments = (data.list || []).map((raw) => parseCommentRaw(raw));
-      this.comments = this.comments.concat(newComments);
-      this.hasMore = this.comments.length < this.totalComments;
+      let data: CommentPageData = await this.apiService.getComments('manhua', this.ownerId(), page);
+      if (this.cache) {
+        this.cache.saveCommentPage('manhua', this.ownerId(), page, JSON.stringify(data.list || []), data.total);
+      }
+      this.currentPage = page;
+      if (!this.renderFromStore()) {
+        this.comments = this.comments.concat((data.list || []).map((raw) => parseCommentRaw(raw)));
+        this.hasMore = this.comments.length < this.totalComments;
+      }
     } catch (err) {
       console.error('[AlbumCommentPage] loadMoreComments error:', JSON.stringify(err));
-      this.currentPage--;
       this.loadFailed = true;
     } finally {
       this.isLoadingMore = false;
@@ -91,7 +181,10 @@ struct AlbumCommentPage {
       let msg = await this.apiService.sendComment(this.albumId.toString(), this.sendText.trim(), '');
       console.info('[AlbumCommentPage] sendComment ok, msg=' + msg);
       this.sendText = '';
-      // 发送成功后刷新评论
+      // 发送成功后作废本地评论页再重载，保证拿到新评论
+      if (this.cache) {
+        this.cache.clearCommentPages('manhua', this.ownerId());
+      }
       this.currentPage = 1;
       await this.loadComments();
       try {
@@ -121,7 +214,10 @@ struct AlbumCommentPage {
     }
     try {
       let msg = await this.apiService.sendComment(this.albumId.toString(), text, commentId);
-      // 回复成功后刷新
+      // 回复成功后作废本地评论页再重载
+      if (this.cache) {
+        this.cache.clearCommentPages('manhua', this.ownerId());
+      }
       this.currentPage = 1;
       await this.loadComments();
       try {
@@ -189,6 +285,7 @@ struct AlbumCommentPage {
           .layoutWeight(1)
           .justifyContent(FlexAlign.Center)
         } else {
+          Refresh({ refreshing: $$this.isRefreshing }) {
           Scroll() {
             Column() {
               ForEach(this.comments, (comment: CommentInfo, index: number) => {
@@ -258,6 +355,12 @@ struct AlbumCommentPage {
               this.loadMoreComments();
             }
           })
+          }
+          .onRefreshing(() => {
+            this.pullRefresh();
+          })
+          .layoutWeight(1)
+          .width('100%')
         }
 
         // ── 底部评论输入栏 ──

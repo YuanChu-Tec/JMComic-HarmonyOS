@@ -36,14 +36,8 @@ export class ZipExporter {
         return null;
       }
       ZipExporter.copyToUri(zipPath, uris[0]);
-      // 记录导出时间：已下载内容进入「可延迟清理」层，不再永不清理
-      let library = await ComicLibrary.getInstance();
-      let manifests = library.getAllManifests();
-      for (let m of manifests) {
-        if (m.albumId === albumId) {
-          library.markExported(m.photoId);
-        }
-      }
+      // 导出时间由调用方写 pref（exported_{albumId}），清理规则据此判断；
+      // 章节清单只记磁盘事实，不再存导出时间
       return `压缩包已保存：${safeName}.zip`;
     } finally {
       ZipExporter.cleanupZip(zipPath);
@@ -85,16 +79,8 @@ export class ZipExporter {
         return null;
       }
       let saved = 0;
-      let library = await ComicLibrary.getInstance();
-      let manifests = library.getAllManifests();
       for (let i = 0; i < uris.length && i < zipPaths.length; i++) {
         ZipExporter.copyToUri(zipPaths[i], uris[i]);
-        let albumId = albums[i].albumId;
-        for (let m of manifests) {
-          if (m.albumId === albumId) {
-            library.markExported(m.photoId);
-          }
-        }
         saved++;
       }
       return `已保存 ${saved} 个压缩包`;

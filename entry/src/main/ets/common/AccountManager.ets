@@ -1,4 +1,5 @@
-import { preferences } from '@kit.ArkData';
+import { AccountDao, AccountRecord } from '../storage/AccountDao';
+import { SettingDao } from '../storage/SettingDao';
 import { UserSession } from '../models/Album';
 import { ApiService } from '../network/ApiService';
 import { CacheManager } from './CacheManager';
@@ -19,30 +20,47 @@ export interface ActiveCredentials {
   password: string;
 }
 
-const PREF_NAME = 'JMComicUser';
-const KEY_ACCOUNTS = 'accounts';        // SavedAccount[] JSON 串
-const KEY_ACTIVE = 'active_username';   // 当前登录账号的登录名
-// 旧版单账号键：与活跃账号保持同步写入，回滚旧版本时自动登录仍可用
-const KEY_LEGACY_USERNAME = 'username';
-const KEY_LEGACY_PASSWORD = 'password';
-const KEY_LEGACY_SAVE = 'savePassword';
+/** pref 表里记录当前活跃账号登录名的键 */
+const KEY_ACTIVE = 'active_username';
+
+/** pref 表里记录最近一次成功会话快照的键（冷启动据此先点亮登录态） */
+const KEY_SESSION = 'active_session';
+
+/** pref 表里记录是否允许冷启动自动登录的键（'0' 关闭，缺省开启） */
+const KEY_AUTO_LOGIN = 'auto_login';
+
+/**
+ * 会话快照：UserSession 的可序列化字段
+ *
+ * 只用于冷启动渲染（头像/昵称/等级/金币先在屏上），服务端有效性由随后的静默登录复验。
+ */
+interface SessionSnapshot {
+  uid: string;
+  username: string;
+  email: string;
+  photo: string;
+  coin: number;
+  level: number;
+  levelName: string;
+  albumFavorites: number;
+  albumFavoritesMax: number;
+  sessionToken: string;
+}
 
 /**
  * 多账号管理器
  *
  * 职责：
- * - 维护已保存账号列表（持久化在 preferences 'JMComicUser' 的 accounts 键）
- * - 跟踪当前活跃账号，冷启动自动登录取其凭据
+ * - 维护已保存账号列表（account 表，顺序由 sort 列决定）
+ * - 跟踪当前活跃账号（pref 表的 active_username），冷启动自动登录取其凭据
  * - 切换账号 = 用保存的凭据重新走 /login（服务端身份由 AVS cookie 决定，单全局 cookie，
  *   因此同一时刻只有一个会话有效，旧会话被覆盖）
  * - 退出登录 = 移除当前账号并清空会话（其余已保存账号保留，供下次登录后快速切换）
- *
- * 旧版本单账号数据迁移：首次 init 时若不存在 accounts 键但存在旧 username/password 键，
- * 则迁移为列表首项并置为活跃账号。
  */
 export class AccountManager {
   private static instance: AccountManager | null = null;
-  private prefs: preferences.Preferences | null = null;
+  private dao: AccountDao | null = null;
+  private settings: SettingDao | null = null;
   private accounts: SavedAccount[] = [];
   private activeUsername: string = '';
   private apiService: ApiService = ApiService.getInstance();
@@ -58,39 +76,14 @@ export class AccountManager {
   }
 
   /**
-   * 初始化：读取持久化数据并执行旧版单账号迁移（幂等，重复调用仅首次生效）
+   * 初始化：从 account 表与 pref 表读回数据（幂等，重复调用仅首次生效）
    */
   async init(): Promise<void> {
-    if (this.prefs) return;
-    this.prefs = await preferences.getPreferences(getContext(), PREF_NAME);
-
-    let raw = this.prefs.getSync(KEY_ACCOUNTS, '') as string;
-    if (raw) {
-      try {
-        this.accounts = JSON.parse(raw) as SavedAccount[];
-      } catch {
-        this.accounts = [];
-      }
-      this.activeUsername = this.prefs.getSync(KEY_ACTIVE, '') as string;
-    } else {
-      // 旧版单账号迁移
-      let legacyUser = this.prefs.getSync(KEY_LEGACY_USERNAME, '') as string;
-      let legacyPass = this.prefs.getSync(KEY_LEGACY_PASSWORD, '') as string;
-      if (legacyUser && legacyPass) {
-        let migrated: SavedAccount = {
-          username: legacyUser,
-          password: legacyPass,
-          nickname: legacyUser,
-          photo: '',
-          level: 0,
-          levelName: ''
-        };
-        this.accounts = [migrated];
-        this.activeUsername = legacyUser;
-        this.persist();
-        console.info('[AccountManager] 已迁移旧版单账号数据');
-      }
-    }
+    if (this.dao !== null) return;
+    this.dao = await AccountDao.getInstance();
+    this.settings = await SettingDao.getInstance();
+    this.accounts = this.dao.list().map((r: AccountRecord) => this.toSaved(r));
+    this.activeUsername = this.settings.get(KEY_ACTIVE, '');
     AppStorage.setOrCreate('activeUsername', this.activeUsername);
   }
 
@@ -115,7 +108,27 @@ export class AccountManager {
   }
 
   /**
-   * 登录成功后登记账号：更新或插入列表项、置为活跃账号、同步旧版键
+   * 是否允许冷启动自动登录（缺省开启，与加开关之前的行为一致）
+   *
+   * 关掉后既不恢复会话快照、也不静默登录，启动停在未登录；凭据仍留在账号表里，
+   * 账号管理页照样能一键切换。
+   */
+  isAutoLoginEnabled(): boolean {
+    if (this.settings === null) return true;
+    return this.settings.get(KEY_AUTO_LOGIN, '1') !== '0';
+  }
+
+  /** 切换自动登录偏好（关闭时顺带清掉会话快照，否则下次启动仍会先亮起） */
+  setAutoLoginEnabled(enabled: boolean): void {
+    if (this.settings === null) return;
+    this.settings.set(KEY_AUTO_LOGIN, enabled ? '1' : '0');
+    if (!enabled) {
+      this.clearSessionSnapshot();
+    }
+  }
+
+  /**
+   * 登录成功后登记账号：更新或插入列表项、置为活跃账号
    *
    * @param username 登录名
    * @param password 登录用密码
@@ -142,10 +155,71 @@ export class AccountManager {
     }
     this.activeUsername = username;
     this.persist();
-
-    let savedPass = savePassword ? password : '';
-    await this.syncLegacy(username, savedPass, savePassword);
+    // 快照只服务于冷启动：没记住密码、或用户关了自动登录，都不该留
+    if (savePassword && password && this.isAutoLoginEnabled()) {
+      this.saveSessionSnapshot(session);
+    } else {
+      this.clearSessionSnapshot();
+    }
     AppStorage.setOrCreate('activeUsername', username);
+  }
+
+  /**
+   * 读回最近一次会话快照（同步，冷启动在首帧前调用）
+   *
+   * 返回的会话未经服务端校验：调用方应先点亮界面，再后台静默登录复验。
+   */
+  loadSessionSnapshot(): UserSession | null {
+    if (this.settings === null) return null;
+    let raw = this.settings.get(KEY_SESSION, '');
+    if (!raw) return null;
+    try {
+      let snapshot = JSON.parse(raw) as SessionSnapshot;
+      if (!snapshot.username) return null;
+      return this.toSession(snapshot);
+    } catch (err) {
+      console.warn('[AccountManager] loadSessionSnapshot parse error:', JSON.stringify(err));
+      return null;
+    }
+  }
+
+  /** 清掉会话快照（退出登录、密码未被记住、静默复验失败时调用） */
+  clearSessionSnapshot(): void {
+    if (this.settings === null) return;
+    this.settings.remove(KEY_SESSION);
+  }
+
+  private saveSessionSnapshot(session: UserSession): void {
+    if (this.settings === null) return;
+    let snapshot: SessionSnapshot = {
+      uid: session.uid,
+      username: session.username,
+      email: session.email,
+      photo: session.photo,
+      coin: session.coin,
+      level: session.level,
+      levelName: session.levelName,
+      albumFavorites: session.albumFavorites,
+      albumFavoritesMax: session.albumFavoritesMax,
+      sessionToken: session.sessionToken,
+    };
+    this.settings.set(KEY_SESSION, JSON.stringify(snapshot));
+  }
+
+  private toSession(snapshot: SessionSnapshot): UserSession {
+    let session = new UserSession();
+    session.uid = snapshot.uid;
+    session.username = snapshot.username;
+    session.email = snapshot.email;
+    session.photo = snapshot.photo;
+    session.coin = snapshot.coin;
+    session.level = snapshot.level;
+    session.levelName = snapshot.levelName;
+    session.albumFavorites = snapshot.albumFavorites;
+    session.albumFavoritesMax = snapshot.albumFavoritesMax;
+    session.sessionToken = snapshot.sessionToken;
+    session.isLoggedIn = true;
+    return session;
   }
 
   /**
@@ -171,14 +245,8 @@ export class AccountManager {
     this.accounts = this.accounts.filter(a => a.username !== this.activeUsername);
     this.activeUsername = '';
     this.persist();
-
-    // 清空旧版单账号键，避免冷启动自动登录复活已退出的账号
-    if (this.prefs) {
-      this.prefs.putSync(KEY_LEGACY_USERNAME, '');
-      this.prefs.putSync(KEY_LEGACY_PASSWORD, '');
-      this.prefs.putSync(KEY_LEGACY_SAVE, true);
-      this.prefs.flushSync();
-    }
+    // 快照一并清掉，否则下次启动会先亮起刚退出的账号
+    this.clearSessionSnapshot();
     this.apiService.logout();
     await this.clearUserScopedCache();
     AppStorage.setOrCreate('activeUsername', '');
@@ -191,20 +259,33 @@ export class AccountManager {
     return null;
   }
 
+  /** 账号列表整表替换 + 活跃账号写 pref（量极小，逐条对比意义不大） */
   private persist(): void {
-    if (!this.prefs) return;
-    this.prefs.putSync(KEY_ACCOUNTS, JSON.stringify(this.accounts));
-    this.prefs.putSync(KEY_ACTIVE, this.activeUsername);
-    this.prefs.flushSync();
+    if (this.dao === null || this.settings === null) return;
+    this.dao.replaceAll(this.accounts.map((a: SavedAccount) => this.toRecord(a)));
+    this.settings.set(KEY_ACTIVE, this.activeUsername);
   }
 
-  /** 旧版单账号键与活跃账号保持同步（回滚旧版本时自动登录仍可用） */
-  private async syncLegacy(username: string, password: string, savePassword: boolean): Promise<void> {
-    if (!this.prefs) return;
-    this.prefs.putSync(KEY_LEGACY_USERNAME, username);
-    this.prefs.putSync(KEY_LEGACY_PASSWORD, savePassword ? password : '');
-    this.prefs.putSync(KEY_LEGACY_SAVE, savePassword);
-    this.prefs.flushSync();
+  private toRecord(a: SavedAccount): AccountRecord {
+    return {
+      username: a.username,
+      password: a.password,
+      nickname: a.nickname,
+      photo: a.photo,
+      level: a.level,
+      levelName: a.levelName,
+    } as AccountRecord;
+  }
+
+  private toSaved(r: AccountRecord): SavedAccount {
+    return {
+      username: r.username,
+      password: r.password,
+      nickname: r.nickname,
+      photo: r.photo,
+      level: r.level,
+      levelName: r.levelName,
+    } as SavedAccount;
   }
 
   /** 清理与登录用户绑定的缓存（收藏列表），避免切换/退出账号后残留他人数据 */

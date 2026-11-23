@@ -6,6 +6,8 @@ import { ApiService } from '../network/ApiService';
 import { DownloadService, ChapterDownloadInfo } from '../network/DownloadService';
 import { CacheManager } from '../common/CacheManager';
 import { PhotoViewModel, AlbumViewModel } from '../models/Album';
+import { ComicAlbum, detailFromAlbum } from '../models/ComicAlbum';
+import { AlbumDao } from '../storage/AlbumDao';
 import { JmAlbumDetail, JmPhotoInfo, JmTagInfo, JmRelatedWork,
   JmAlbumSeries, CategoryBean, FavoriteAlbumItem,
 } from '../models/dto/ApiDto';
@@ -32,6 +34,8 @@ struct AlbumDetailPage {
   @State isFavorited: boolean = false;
   @State favLoading: boolean = false;
   @State refreshTrigger: number = 0;
+  /** 下拉刷新指示器：用户显式拉取，与首屏 isLoading 分开 */
+  @State isRefreshing: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   @StorageProp('isLoggedIn') isLoggedIn: boolean = false;
@@ -43,6 +47,8 @@ struct AlbumDetailPage {
   private apiService: ApiService = ApiService.getInstance();
   private cacheManager: CacheManager | null = null;
   private favCheckedId: number = -1; // 已经做过二次校验的 albumId，避免重复请求
+  /** 下拉刷新是否已有一轮在跑：Refresh 只管指示器，挡不住重复触发 */
+  private isPulling: boolean = false;
 
   // NavDestination 标准入口：参数与数据加载移入 onReady（原 router.getParams 时代在 aboutToAppear）
   private async onPageReady(ctx: NavDestinationContext): Promise<void> {
@@ -66,50 +72,92 @@ struct AlbumDetailPage {
     }
   }
 
-  async loadDetail(): Promise<void> {
-    this.isLoading = true;
-    try {
-      let resp = await this.apiService.getAlbumDetail(this.albumId);
+  /** 详情页渲染的实体 → DTO + 章节视图模型（唯一渲染入口，网络响应不直接进页面） */
+  private renderAlbum(album: ComicAlbum): void {
+    this.album = detailFromAlbum(album);
+    let chapters: PhotoViewModel[] = [];
+    if (album.chapters.length > 0) {
+      for (let chapter of album.chapters) {
+        let vm = new PhotoViewModel();
+        vm.id = chapter.id;
+        vm.photoId = chapter.photoId;
+        vm.name = chapter.title;
+        vm.index = chapter.sort;
+        vm.scrambleId = 0;
+        chapters.push(vm);
+      }
+    } else {
+      // 单本漫画：无 chapters，用 albumId 作为唯一章节
+      let vm = new PhotoViewModel();
+      vm.id = album.id;
+      vm.photoId = album.id.toString();
+      vm.name = '第1话';
+      vm.index = 1;
+      vm.scrambleId = 0;
+      chapters.push(vm);
+    }
+    this.chapters = chapters;
+    this.albumName = album.title;
+    this.isFavorited = album.isFavorite;
+    // 检查已读章节
+    this.loadReadStatus();
+    // 已登录时，用收藏列表做二次确认（详情API的is_favorite不可靠）
+    if (this.isLoggedIn && !this.isFavorited) {
+      this.verifyFavorited();
+    }
+  }
 
+  async loadDetail(force: boolean = false): Promise<void> {
+    try {
+      // 1. 本地优先：有章节目录就先渲染，过期才后台刷新
+      let local = await AlbumDao.load(this.albumId);
+      let hasLocal = local !== null && local.chapters.length > 0;
+      if (local !== null) {
+        this.renderAlbum(local);
+      }
+      this.isLoading = local === null;
+      // fetchedAt === 0 表示统计与关联推荐从未拉过（清过缓存 / 老版本升级），
+      // 此时本地必然没有 related，补一次联网，不等 TTL 到期
+      let relatedMissing = local !== null && local.fetchedAt === 0;
+      if (!force && hasLocal && local !== null && !relatedMissing
+        && Date.now() - local.updatedAt <= CacheManager.feedTtlMsOf(CacheManager.REFRESH_DETAIL)) {
+        return;
+      }
+      // 2. 本地缺失（或过期）才走网络
+      let resp = await this.apiService.getAlbumDetail(this.albumId);
       if (resp.code === 200 && resp.data) {
-        this.album = resp.data as JmAlbumDetail;
-        if (this.album) {
-          // series 包含章节列表，每项为 {id, name, sort}
-          let series = this.album.series;
-          if (series && series.length > 0) {
-            this.chapters = series.map((ep: JmAlbumSeries, index: number) => {
-              let vm = new PhotoViewModel();
-              vm.id = typeof ep.id === 'number' ? ep.id : parseInt(ep.id) || 0;
-              vm.photoId = ep.id?.toString() || '';
-              vm.name = ep.name || '';
-              vm.index = typeof ep.sort === 'number' ? ep.sort : parseInt(ep.sort) || (index + 1);
-              vm.scrambleId = 0;
-              return vm;
-            });
-          } else {
-            // 单本漫画：无 series，用 albumId 作为唯一章节
-            let vm = new PhotoViewModel();
-            vm.id = this.albumId;
-            vm.photoId = this.albumId.toString();
-            vm.name = '第1话';
-            vm.index = 1;
-            vm.scrambleId = 0;
-            this.chapters = [vm];
-          }
-          this.albumName = this.album.name;
-          this.isFavorited = this.album.is_favorite === true;
-          // 检查已读章节
-          this.loadReadStatus();
-          // 已登录时，用收藏列表做二次确认（详情API的is_favorite不可靠）
-          if (this.isLoggedIn && !this.isFavorited) {
-            this.verifyFavorited();
-          }
+        // 3. 先落库，再从库读回来渲染
+        await AlbumDao.saveFromDetail(resp.data as JmAlbumDetail);
+        let stored = await AlbumDao.load(this.albumId);
+        if (stored !== null) {
+          this.renderAlbum(stored);
         }
       }
     } catch (err) {
       console.error('loadDetail error:', JSON.stringify(err));
     } finally {
       this.isLoading = false;
+    }
+  }
+
+  /**
+   * 下拉刷新：跳过 TTL 直接重拉详情，并让收藏态重新做一次二次校验。
+   * 详情不整页清空，旧内容留在屏幕上直到新数据落库后替换。
+   */
+  private async pullRefresh(): Promise<void> {
+    if (this.isPulling) {
+      this.isRefreshing = false;
+      return;
+    }
+    this.isPulling = true;
+    try {
+      this.favCheckedId = -1;
+      await this.loadDetail(true);
+    } catch (err) {
+      console.error('[AlbumDetailPage] pull refresh error:', JSON.stringify(err));
+    } finally {
+      this.isPulling = false;
+      this.isRefreshing = false;
     }
   }
 
@@ -143,8 +191,10 @@ struct AlbumDetailPage {
         let found = resp.data.list.some((item: FavoriteAlbumItem) => {
           return String(item.id) === String(this.albumId);
         });
-        if (found) {
-          this.isFavorited = true;
+        if (found !== this.isFavorited) {
+          this.isFavorited = found;
+          // 校验结果写回库，避免下次读库时被旧值覆盖
+          await AlbumDao.setFavorite(this.albumId, found);
         }
       }
     } catch (err) {
@@ -183,6 +233,10 @@ struct AlbumDetailPage {
       let result = await this.apiService.toggleFavorite(this.albumId.toString());
       if (result.status === 'ok') {
         this.isFavorited = !this.isFavorited;
+        // 收藏态写回库（详情页读库渲染，内存改了库不改会被旧值覆盖）
+        await AlbumDao.setFavorite(this.albumId, this.isFavorited);
+        // 收藏列表的本地分页随之作废，下次进入重新联网
+        await AlbumDao.clearFeedPrefix('fav:');
       }
     } catch (err) {
       console.error('[AlbumDetailPage] toggleFavorite error:', JSON.stringify(err));
@@ -368,6 +422,7 @@ struct AlbumDetailPage {
         .height('100%')
         .justifyContent(FlexAlign.Center)
       } else if (this.album) {
+        Refresh({ refreshing: $$this.isRefreshing }) {
         Scroll() {
           Column() {
             // ── 顶部留白（避开浮层顶栏） ──
@@ -376,7 +431,7 @@ struct AlbumDetailPage {
             // ── 基本信息区 ──
             Row() {
               // 封面
-              Image(this.apiService.buildCoverUrl(this.album.id, ''))
+              Image(this.apiService.coverSource(this.album.id, '', this.album.image))
                 .width(120)
                 .height(165)
                 .objectFit(ImageFit.Cover)
@@ -738,7 +793,7 @@ struct AlbumDetailPage {
 
                 ForEach(this.album.related_list, (work: JmRelatedWork) => {
                   Row() {
-                    Image(this.apiService.buildCoverUrl(work.id, ''))
+                    Image(this.apiService.coverSource(work.id, '', work.image))
                       .width(60)
                       .height(80)
                       .objectFit(ImageFit.Cover)
@@ -780,6 +835,12 @@ struct AlbumDetailPage {
         .width('100%')
         .height('100%')
         .scrollBar(BarState.Off)
+        }
+        .onRefreshing(() => {
+          this.pullRefresh();
+        })
+        .width('100%')
+        .height('100%')
       } else {
         Column() {
           Text('加载失败')

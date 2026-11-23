@@ -5,12 +5,15 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { ThemeManager } from '../common/ThemeManager';
 import { UpdateManager, RELEASES_PAGE_URL } from '../common/UpdateManager';
 import { CacheManager } from '../common/CacheManager';
+import { AppDatabase } from '../storage/AppDatabase';
 
 const DOMAIN = 0x0000;
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+    // 窗口内容未加载时页面里的 getContext() 是 undefined，服务层统一从 AppStorage 取这个实例
+    AppStorage.setOrCreate('abilityContext', this.context);
   }
 
   onConfigurationUpdate(config: Configuration): void {
@@ -64,6 +67,11 @@ export default class EntryAbility extends UIAbility {
       hilog.info(DOMAIN, 'testTag', `topSafeHeight=${topHeight}, bottomSafeHeight=${bottomHeight}`);
     });
 
+    // 预热数据库：失败时能在启动日志里直接看到原因（页面侧另有兜底，不会永久停在加载中）
+    AppDatabase.getInstance().catch((err: Error) => {
+      hilog.error(DOMAIN, 'testTag', 'Init database failed: %{public}s', JSON.stringify(err));
+    });
+
     // 先应用用户保存的主题（跟随系统/浅色/深色），再加载页面
     ThemeManager.getInstance().init().finally(() => {
       windowStage.loadContent('pages/Index', (err) => {
@@ -93,7 +101,7 @@ export default class EntryAbility extends UIAbility {
       return;
     }
 
-    let cache = await CacheManager.getInstance(this.context);
+    let cache = await CacheManager.getInstance();
     // 用户已忽略过该版本，不再提示（换版本号后会重新提示）
     if (cache.getSkipUpdateVersion() === latest) {
       hilog.info(DOMAIN, 'testTag', `Update ${latest} was skipped by user`);

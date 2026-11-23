@@ -1,5 +1,3 @@
-import { RespJmAlbumInfo } from '../models/dto/ApiDto';
-
 /**
  * Navigation 路由参数集中定义（docs/Navigation路由规范.md §5：Object 传递、接收侧 as 收窄）。
  * 发送侧字面量须显式对应具名接口（arkts-no-untyped-obj-literals），
@@ -34,9 +32,12 @@ export interface CommentPageParams {
   albumName: string;
 }
 
-/** SectionMorePage：initialAlbums 为分区首屏数据（免首屏请求） */
+/** SectionMorePage：按源列表 + 分区标识从库回放首屏，本地缺失才联网 */
 export interface SectionMoreParams {
   sectionTitle: string;
-  initialAlbums: RespJmAlbumInfo[];
+  /** 源列表在库里的标识：home:promote / home:latest */
+  feedKey: string;
+  /** 源列表内的分区标识：推广分区为 promote-0，最新上传即 home:latest */
+  sectionKey: string;
   source?: string;
 }

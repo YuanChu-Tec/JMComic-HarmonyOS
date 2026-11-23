@@ -494,7 +494,7 @@ struct DownloadPage {
       Row() {
         // 封面缩略（管理态选中时叠暗化勾选遮罩）
         Stack() {
-          Image(this.apiService.buildCoverUrl(group.albumId))
+          Image(this.apiService.coverSource(group.albumId))
             .width(64)
             .height(86)
             .objectFit(ImageFit.Cover)

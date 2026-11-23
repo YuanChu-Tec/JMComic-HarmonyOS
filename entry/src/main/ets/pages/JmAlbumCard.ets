@@ -30,7 +30,7 @@ export struct JmAlbumCard {
 
   build() {
     Column() {
-      Image(this.apiService.buildCoverUrl(this.cardInfo.id))
+      Image(this.apiService.coverSource(this.cardInfo.id, '_3x4', this.cardInfo.image))
         .width(this.getCardWidth())
         .aspectRatio(0.75) // 封面 3:4，宽度变化时高度自动跟随
         .objectFit(ImageFit.Cover)

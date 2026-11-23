@@ -1,22 +1,33 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
 import { common } from '@kit.AbilityKit';
-import { ChapterManifest } from '../models/Album';
 import { JmImageInfo, JmPictureResp } from '../models/dto/ApiDto';
 import { HttpClient } from '../network/HttpClient';
 import { ImageDecodeUtils } from './ImageDecodeUtils';
 import { APP_HEADERS_IMAGE } from './Constants';
-import { ComicAlbumStore } from '../models/ComicAlbum';
+import { AlbumDao } from '../storage/AlbumDao';
+import { ProgressDao } from '../storage/ProgressDao';
+import { CacheManager } from './CacheManager';
 
 /**
- * 章节元数据副本：服务器 /chapter 返回的稳定内容（不含实时统计、不含用户态）
- * 存于章节目录的 meta.json，记录「当前这组 PNG 对应哪份元数据」
+ * 章节磁盘记录，写在章节目录的 meta.json 里，一目录一份。
+ *
+ * fingerprint / imgNames 只由 commitChapter 写（整章对齐完成才算），
+ * 因此 meta.json 既是「这版图已对齐」的提交标记，也是启动扫描重建索引的唯一来源。
+ * albumId / albumName / chapterName / downloadedAt 是索引信息，跟着目录走。
  */
 export interface ChapterMeta {
   photoId: string;
+  albumId: number;
+  albumName: string;
+  chapterName: string;
+  /** 当前已落盘 PNG 用的解码参数（换版时与 imgNames 一起参与比对） */
   scrambleId: number;
   imgNames: string[];
+  /** 元数据指纹 = hash(scrambleId + imgNames)，仅作「哪一次拉取」的提交标记 */
   fingerprint: string;
+  /** 手动下载时间，0 表示只是阅读缓存；随目录一起删，故与文件同处 */
+  downloadedAt: number;
   updatedAt: number;
 }
 
@@ -45,27 +56,50 @@ export interface CleanupResult {
 /**
  * 统一漫画图片仓库（逐页原子替换）
  *
- * 目录结构：
+ * 目录结构（一目录一条记录，没有平行的索引目录）：
  *   filesDir/JMComic/albums/{albumId}/chapters/{章节}_{photoId}/
- *     meta.json          → 当前这组 PNG 对应的服务器元数据（scrambleId + imgNames）
- *     originals/{imgName}→ 服务器原始图片（webp/jpg，原名）
+ *     meta.json          → 这组 PNG 对应的元数据 + 是否手动下载（提交标记）
  *     1.png … N.png      → 已解码 PNG
- *   albums/{albumId}/manifests/{photoId}.json → 生命周期清单（跟随漫画目录）
+ *
+ * 可重建的中间产物不占 filesDir：
+ *   cacheDir/JMComic/originals/{photoId}/{imgName} → 服务器原始图片（webp/jpg，原名）
+ * 它只是 PNG 的原料，系统回收或「清理缓存」删掉都不影响阅读，缺了下次再下。
+ *
+ * 专辑目录本身还放封面：
+ *   filesDir/JMComic/albums/{albumId}/cover{size}-{ver}.jpg → 封面图（ver 由封面名算出）
+ *   filesDir/JMComic/albums/{albumId}/cover{size}.jpg       → 无版本名（关闭封面刷新时用）
+ * 由 static cover* 方法管理，与章节图同生命周期，removeAlbum 一起删。
+ *
+ * meta.json 既是「这版图已对齐」的提交标记，也是启动扫描重建索引的唯一来源：
+ * 删目录即删记录，不会出现清单在而目录不在、或目录在而清单不在的中间态。
+ * 目录存在但没有 meta.json 说明是逐页下载中断，仍按目录名建索引，可被清理。
+ *
+ * 用户态事实不落在这里：已导出时间在 pref（exported_{albumId}），最后阅读时间在 read_state。
  *
  * 写入策略：
  * - 每页独立写入：先写 `{name}.tmp`，再 rename 覆盖目标，保证任何时刻读到的都是完整文件
- * - 换版（fingerprint 变化）时逐页替换：已替换的页即新图，未替换的页仍是完整旧图，
- *   用户始终可读，不会出现整章空白
- * - meta.json 在整章替换完成后写入，标记这组图已对应新元数据
+ * - 换版由设置页「刷新内容·图片」开关决定：开启时比对 meta.json 里这一页的
+ *   img_name / scramble_id，变了就重下覆盖；关闭时本地有就一直用
+ * - meta.json 在整章处理完成后写入，作为「这组图来自某次拉取」的提交标记
+ *
+ * 启动扫描顺带清理非产物文件（rename 前崩溃留下的 .tmp、旧版 cover{size}.name），
+ * 因此 filesDir 里稳定只有 PNG、meta.json、封面三类。
  */
 export class ComicLibrary {
   private static instance: ComicLibrary | null = null;
   private static staticBaseDir: string = '';
   private baseDir: string = '';
-  private manifests: Map<string, ChapterManifest> = new Map<string, ChapterManifest>();
+  /** 可重建的中间产物（服务器原始图）放这里：系统或「清理缓存」随时可删，删了不影响阅读 */
+  private cacheBaseDir: string = '';
   private inFlight: Map<string, Promise<string>> = new Map<string, Promise<string>>();
-  /** 章节目录元数据的内存副本，避免预加载逐页读盘解析 */
+  /**
+   * 章节索引：photoId → 磁盘记录，启动扫描 chapters 目录重建，之后读写都在内存。
+   * fingerprint 为空表示该目录还没有提交记录（下载中断），不代表磁盘上的图属于某个版本。
+   */
   private metaCache: Map<string, ChapterMeta> = new Map<string, ChapterMeta>();
+  /** 清理规则要读的用户态事实（已导出时间、最后阅读时间）都在 SQL，不在清单文件里 */
+  private cache: CacheManager | null = null;
+  private progress: ProgressDao | null = null;
 
   private constructor() {
   }
@@ -107,46 +141,357 @@ export class ComicLibrary {
     return names;
   }
 
-  /** 同步计算专辑目录：与 ComicAlbumStore 的实体目录合并 */
+  /** 同步计算专辑目录：与 AlbumDao 的实体目录合并 */
   static albumDir(albumId: number, albumName: string): string {
-    return ComicAlbumStore.albumRoot(albumId);
+    return AlbumDao.albumRoot(albumId);
+  }
+
+  /** 专辑目录（不需要专辑名；封面等静态调用也走这里） */
+  static albumDirOf(albumId: number): string {
+    return AlbumDao.albumRoot(albumId);
+  }
+
+  // ─── 封面 ───
+  // 封面文件名带版本：cover{size}-{hash(image_name)}.jpg。
+  // 设置页「刷新内容·封面」开启时，刷新拿到的 image_name 一变就落到新文件名，
+  // 旧文件随即失效并重下；关闭时退回无版本名 cover{size}.jpg，永久沿用旧图。
+  // 必须是 static：coverSource() 在 build() 里同步取值，等不了 getInstance() 的 async init。
+
+  /** 正在下载的封面路径，避免同图重复请求 */
+  private static coverInflight: Set<string> = new Set<string>();
+
+  /** 无版本名的封面路径（关闭封面刷新时用，也是历史文件名） */
+  static coverPath(albumId: string | number, size: string): string {
+    return `${ComicLibrary.albumDirOf(Number(albumId))}/cover${size}.jpg`;
+  }
+
+  /** 版本标识：关闭封面刷新或封面名未知时返回空串，退化为无版本文件 */
+  private static coverVersion(imageName: string): string {
+    if (!AlbumDao.refreshCovers || imageName === '') return '';
+    let hash = 5381;
+    for (let i = 0; i < imageName.length; i++) {
+      hash = ((hash << 5) - hash + imageName.charCodeAt(i)) | 0;
+    }
+    return (hash >>> 0).toString(36);
+  }
+
+  /** 某专辑某尺寸的当前封面路径：有版本时 cover{size}-{ver}.jpg */
+  static coverPathOf(albumId: string | number, size: string, imageName: string): string {
+    let ver = ComicLibrary.coverVersion(imageName);
+    if (ver === '') return ComicLibrary.coverPath(albumId, size);
+    return `${ComicLibrary.albumDirOf(Number(albumId))}/cover${size}-${ver}.jpg`;
+  }
+
+  /** 本地可用返回 file:// URI；文件缺失返回空串 */
+  static coverLocalUri(albumId: string | number, size: string, imageName: string = ''): string {
+    let path = ComicLibrary.coverPathOf(albumId, size, imageName);
+    if (fileIo.accessSync(path)) return `file://${path}`;
+    // 版本化首次启用：旧的无版本封面改名沿用，避免一次性全量重下
+    let legacy = ComicLibrary.coverPath(albumId, size);
+    if (path !== legacy && fileIo.accessSync(legacy)) {
+      try {
+        fileIo.renameSync(legacy, path);
+        return `file://${path}`;
+      } catch (e) {
+        console.warn(`[ComicLibrary] adopt cover failed ${path}: ${JSON.stringify(e)}`);
+      }
+    }
+    // 关掉封面刷新时目录里的任一张同尺寸封面都算数（含之前下载的版本化文件）；
+    // 开启时只有拿不到封面名（如下载管理页）才兜底——否则会把旧版本图当成当前版本，换版永不生效
+    if (imageName === '' || !AlbumDao.refreshCovers) return ComicLibrary.findCover(albumId, size);
+    return '';
+  }
+
+  /** 目录里已有的同尺寸封面（cover{size}.jpg 或 cover{size}-*.jpg），没有返回空串 */
+  private static findCover(albumId: string | number, size: string): string {
+    let dir = ComicLibrary.albumDirOf(Number(albumId));
+    let base = `cover${size}`;
+    let names: string[] = [];
+    try {
+      names = fileIo.listFileSync(dir);
+    } catch (e) {
+      return '';
+    }
+    for (let name of names) {
+      if (!name.endsWith('.jpg')) continue;
+      if (name !== `${base}.jpg` && !name.startsWith(`${base}-`)) continue;
+      return `file://${dir}/${name}`;
+    }
+    return '';
+  }
+
+  /** 本地没有当前版本的封面时下载一次；已有同版本文件一律不重下 */
+  static ensureCover(albumId: string | number, size: string, url: string,
+    imageName: string = ''): void {
+    let path = ComicLibrary.coverPathOf(albumId, size, imageName);
+    if (fileIo.accessSync(path)) return;
+    if (ComicLibrary.coverInflight.has(path)) return;
+    ComicLibrary.coverInflight.add(path);
+    HttpClient.downloadBinary(url, APP_HEADERS_IMAGE)
+      .then((data: ArrayBuffer) => {
+        if (data.byteLength > 0) ComicLibrary.writeCover(albumId, size, data, imageName);
+      })
+      .catch((err: Error) => {
+        console.warn(`[ComicLibrary] cover download failed ${albumId}${size}: ${JSON.stringify(err)}`);
+      })
+      .finally(() => {
+        ComicLibrary.coverInflight.delete(path);
+      });
+  }
+
+  private static writeCover(albumId: string | number, size: string, data: ArrayBuffer,
+    imageName: string): void {
+    let path = ComicLibrary.coverPathOf(albumId, size, imageName);
+    try {
+      let dir = ComicLibrary.albumDirOf(Number(albumId));
+      if (!fileIo.accessSync(dir)) fileIo.mkdirSync(dir, true);
+      ComicLibrary.atomicWrite(path, data);
+    } catch (err) {
+      console.warn(`[ComicLibrary] cover write failed ${path}: ${JSON.stringify(err)}`);
+      return;
+    }
+    ComicLibrary.dropOtherCovers(albumId, size, path);
+  }
+
+  /** 换版后删掉同尺寸的其它封面文件，避免残留在盘上白占体积 */
+  private static dropOtherCovers(albumId: string | number, size: string, keep: string): void {
+    let dir = ComicLibrary.albumDirOf(Number(albumId));
+    let base = `cover${size}`;
+    let names: string[] = [];
+    try {
+      names = fileIo.listFileSync(dir);
+    } catch (e) {
+      return;
+    }
+    for (let name of names) {
+      if (!name.endsWith('.jpg')) continue;
+      if (name !== `${base}.jpg` && !name.startsWith(`${base}-`)) continue;
+      let full = `${dir}/${name}`;
+      if (full === keep) continue;
+      try {
+        fileIo.unlinkSync(full);
+      } catch (e) {
+        console.warn(`[ComicLibrary] drop stale cover failed ${full}: ${JSON.stringify(e)}`);
+      }
+    }
+  }
+
+  /** 旧版本的 cover{size}.name 索引：已无任何读取方，扫到就删 */
+  private static removeLegacyCoverNames(albumRoot: string): void {
+    let names: string[] = [];
+    try {
+      names = fileIo.listFileSync(albumRoot);
+    } catch (e) {
+      return;
+    }
+    for (let name of names) {
+      if (!name.startsWith('cover') || !name.endsWith('.name')) continue;
+      try {
+        fileIo.unlinkSync(`${albumRoot}/${name}`);
+      } catch (e) {
+        console.warn(`[ComicLibrary] remove legacy cover name failed ${name}: ${JSON.stringify(e)}`);
+      }
+    }
+  }
+
+  /**
+   * 清掉原子写崩溃残留的 {name}.tmp。
+   * atomicWrite 先写 .tmp 再 rename，进程若死在两者之间就会留下半份文件；
+   * 读取方从不看 .tmp，所以留在盘上只会白占体积。
+   */
+  private static removeTmpFiles(dir: string): void {
+    let names: string[] = [];
+    try {
+      names = fileIo.listFileSync(dir);
+    } catch (e) {
+      return;
+    }
+    for (let name of names) {
+      if (!name.endsWith('.tmp')) continue;
+      try {
+        fileIo.unlinkSync(`${dir}/${name}`);
+      } catch (e) {
+        console.warn(`[ComicLibrary] remove tmp failed ${name}: ${JSON.stringify(e)}`);
+      }
+    }
   }
 
   private async init(): Promise<void> {
     let ctx = getContext() as common.UIAbilityContext;
     this.baseDir = `${ctx.filesDir}/JMComic/albums`;
     ComicLibrary.staticBaseDir = this.baseDir;
+    this.cacheBaseDir = `${ctx.cacheDir}/JMComic/originals`;
     if (!fileIo.accessSync(this.baseDir)) fileIo.mkdirSync(this.baseDir, true);
-    await this.scanManifests();
+    this.cache = await CacheManager.getInstance();
+    this.progress = await ProgressDao.getInstance();
+    await this.scanLibrary();
   }
 
-  /** 某部漫画的清单目录（跟随漫画目录，一章一个文件） */
-  private getManifestDir(albumId: number): string {
-    return `${ComicAlbumStore.albumRoot(albumId)}/manifests`;
+  /** 章节目录名 = {安全章节名}_{photoId}，photoId 在最后一段 */
+  private static photoIdOfDir(dirName: string): string {
+    let pos = dirName.lastIndexOf('_');
+    if (pos < 0) return '';
+    let id = dirName.substring(pos + 1);
+    return id.length > 0 && !Number.isNaN(Number(id)) ? id : '';
   }
 
-  /** 启动时扫描各漫画目录下的清单，读进内存避免每次查盘 */
-  private async scanManifests(): Promise<void> {
+  private static chapterNameOfDir(dirName: string, photoId: string): string {
+    let pos = dirName.lastIndexOf('_');
+    return pos > 0 ? dirName.substring(0, pos) : `第${photoId}话`;
+  }
+
+  /** 老格式 meta.json 缺字段时补默认值；不做业务判断 */
+  private static normalizeMeta(raw: ChapterMeta): ChapterMeta {
+    return {
+      photoId: raw.photoId || '',
+      albumId: raw.albumId || 0,
+      albumName: raw.albumName || '',
+      chapterName: raw.chapterName || '',
+      scrambleId: raw.scrambleId || 0,
+      imgNames: raw.imgNames || [],
+      fingerprint: raw.fingerprint || '',
+      downloadedAt: raw.downloadedAt || 0,
+      updatedAt: raw.updatedAt || 0,
+    } as ChapterMeta;
+  }
+
+  /**
+   * 启动时扫 chapters 目录重建索引。
+   * meta.json 是唯一记录来源；目录存在但没有 meta.json 的，按目录名建一条未提交记录。
+   */
+  private async scanLibrary(): Promise<void> {
     try {
       if (!fileIo.accessSync(this.baseDir)) return;
-      let albums = await fileIo.listFile(this.baseDir);
-      for (let album of albums) {
-        let dir = `${this.baseDir}/${album}/manifests`;
-        if (!fileIo.accessSync(dir)) continue;
-        let names = await fileIo.listFile(dir);
-        for (let name of names) {
-          if (!name.endsWith('.json')) continue;
-          try {
-            let m = JSON.parse(fileIo.readTextSync(`${dir}/${name}`)) as ChapterManifest;
-            this.manifests.set(m.photoId, m);
-          } catch (e) {
-            console.warn(`[ComicLibrary] bad manifest ${album}/${name}: ${JSON.stringify(e)}`);
+      let albumDirs = await fileIo.listFile(this.baseDir);
+      for (let albumDirName of albumDirs) {
+        let albumId = Number(albumDirName);
+        if (Number.isNaN(albumId)) continue;
+        let albumRoot = `${this.baseDir}/${albumDirName}`;
+        // 崩溃残留的 .tmp、旧版封面索引：都不是最终产物，扫到就清
+        ComicLibrary.removeTmpFiles(albumRoot);
+        ComicLibrary.removeLegacyCoverNames(albumRoot);
+        let legacy = this.readLegacyManifests(albumRoot);
+        let chaptersDir = `${albumRoot}/chapters`;
+        if (fileIo.accessSync(chaptersDir)) {
+          let dirs = await fileIo.listFile(chaptersDir);
+          for (let dirName of dirs) {
+            let dir = `${chaptersDir}/${dirName}`;
+            try {
+              if (!fileIo.statSync(dir).isDirectory()) continue;
+            } catch (e) {
+              continue;
+            }
+            let photoId = ComicLibrary.photoIdOfDir(dirName);
+            if (!photoId) continue;
+            // 旧版本把原始图放在 filesDir，现已移到 cacheDir：扫到就清，避免仓库体积虚高
+            ComicLibrary.removeLegacyOriginals(dir);
+            ComicLibrary.removeTmpFiles(dir);
+            this.indexChapter(albumId, photoId, dirName, dir, legacy.get(photoId));
           }
         }
+        // 旧版一章一个 json 的清单目录：信息已并入 meta.json，迁移后删除
+        ComicLibrary.removeLegacyDir(albumRoot);
       }
     } catch (e) {
       console.warn(`[ComicLibrary] scan error: ${JSON.stringify(e)}`);
     }
+  }
+
+  /** 读旧版 manifests 目录（仅迁移时用来补 albumName / downloadedAt，读完即删） */
+  private readLegacyManifests(albumRoot: string): Map<string, ChapterMeta> {
+    let map: Map<string, ChapterMeta> = new Map<string, ChapterMeta>();
+    let dir = `${albumRoot}/manifests`;
+    if (!fileIo.accessSync(dir)) return map;
+    try {
+      let names = fileIo.listFileSync(dir);
+      for (let name of names) {
+        if (!name.endsWith('.json')) continue;
+        try {
+          let raw = JSON.parse(fileIo.readTextSync(`${dir}/${name}`)) as ChapterMeta;
+          if (raw && raw.photoId) map.set(raw.photoId, ComicLibrary.normalizeMeta(raw));
+        } catch (e) {
+          console.warn(`[ComicLibrary] bad legacy manifest ${name}: ${JSON.stringify(e)}`);
+        }
+      }
+    } catch (e) {
+      console.warn(`[ComicLibrary] read legacy manifests failed: ${JSON.stringify(e)}`);
+    }
+    return map;
+  }
+
+  private static removeLegacyDir(albumRoot: string): void {
+    let dir = `${albumRoot}/manifests`;
+    try {
+      if (fileIo.accessSync(dir)) fileIo.rmdirSync(dir);
+    } catch (e) {
+      console.warn(`[ComicLibrary] remove legacy manifests failed: ${JSON.stringify(e)}`);
+    }
+  }
+
+  /** 旧版本的原始图目录在章节目录下，已迁到 cacheDir */
+  private static removeLegacyOriginals(chapterDir: string): void {
+    let dir = `${chapterDir}/originals`;
+    try {
+      if (fileIo.accessSync(dir)) fileIo.rmdirSync(dir);
+    } catch (e) {
+      console.warn(`[ComicLibrary] remove legacy originals failed: ${JSON.stringify(e)}`);
+    }
+  }
+
+  /**
+   * 索引一个章节目录。有 meta.json 就是提交记录；没有则是下载中断，
+   * 只依据目录名建一条未提交记录（不写 meta.json，否则会伪造「已对齐」）。
+   */
+  private indexChapter(albumId: number, photoId: string, dirName: string,
+    dir: string, legacy: ChapterMeta | undefined): void {
+    let meta: ChapterMeta | null = null;
+    let metaPath = `${dir}/meta.json`;
+    if (fileIo.accessSync(metaPath)) {
+      try {
+        meta = ComicLibrary.normalizeMeta(JSON.parse(fileIo.readTextSync(metaPath)) as ChapterMeta);
+      } catch (e) {
+        console.warn(`[ComicLibrary] bad meta ${dir}: ${JSON.stringify(e)}`);
+      }
+    }
+    if (meta === null || meta.fingerprint === '') {
+      this.metaCache.set(photoId, {
+        photoId: photoId,
+        albumId: albumId,
+        albumName: legacy ? legacy.albumName : '',
+        chapterName: meta && meta.chapterName ? meta.chapterName
+          : ComicLibrary.chapterNameOfDir(dirName, photoId),
+        scrambleId: 0,
+        imgNames: [] as string[],
+        fingerprint: '',
+        downloadedAt: legacy ? legacy.downloadedAt : 0,
+        updatedAt: 0,
+      } as ChapterMeta);
+      return;
+    }
+    let changed = false;
+    if (!meta.photoId) {
+      meta.photoId = photoId;
+      changed = true;
+    }
+    if (!meta.albumId) {
+      meta.albumId = albumId;
+      changed = true;
+    }
+    if (!meta.chapterName) {
+      meta.chapterName = ComicLibrary.chapterNameOfDir(dirName, photoId);
+      changed = true;
+    }
+    if (!meta.albumName && legacy !== undefined) {
+      meta.albumName = legacy.albumName;
+      changed = true;
+    }
+    // 旧版清单里的手动下载标记并进来，否则升级后已下载内容会被当成阅读缓存清掉
+    if (meta.downloadedAt === 0 && legacy !== undefined && legacy.downloadedAt > 0) {
+      meta.downloadedAt = legacy.downloadedAt;
+      changed = true;
+    }
+    this.metaCache.set(photoId, meta);
+    if (changed) this.writeMetaFile(dir, meta);
   }
 
   // ─── 路径 ───
@@ -169,9 +514,13 @@ export class ComicLibrary {
     return `${this.getChapterDir(ctx)}/${index + 1}.png`;
   }
 
-  /** 服务器原始图片目录（按 img_name 原名存放 webp/jpg） */
+  /**
+   * 服务器原始图片目录（按 img_name 原名存放 webp/jpg）。
+   * 放 cacheDir：它只是「PNG 的原料」，属于可重建数据，系统回收或「清理缓存」删掉都无妨，
+   * 下次阅读 PNG 时再下一份即可。不对应任何用户资产，故不参与 filesDir 的体积/保留策略。
+   */
   getOriginalsDir(ctx: LibraryContext): string {
-    return `${this.getChapterDir(ctx)}/originals`;
+    return `${this.cacheBaseDir}/${ctx.photoId}`;
   }
 
   hasImage(ctx: LibraryContext, index: number): boolean {
@@ -183,8 +532,9 @@ export class ComicLibrary {
   /**
    * 原子写文件：先写临时文件，再 rename 覆盖目标。
    * 读取方任何时刻拿到的都是完整的旧文件或完整的新文件，不会读到写了一半的内容。
+   * 封面与章节图共用这一份实现，所以是 static。
    */
-  private atomicWrite(path: string, data: ArrayBuffer | string): void {
+  private static atomicWrite(path: string, data: ArrayBuffer | string): void {
     let tmp = `${path}.tmp`;
     let out = fileIo.openSync(tmp,
       fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
@@ -222,11 +572,13 @@ export class ComicLibrary {
   /** 读取当前章节目录已落盘 PNG 对应的元数据（内存优先，避免逐页读盘） */
   getChapterMeta(ctx: LibraryContext): ChapterMeta | null {
     let cached = this.metaCache.get(ctx.photoId);
-    if (cached) return cached;
+    // fingerprint 为空表示只有目录、没有提交记录，不能当作「已对齐某个版本」
+    if (cached && cached.fingerprint) return cached;
     try {
       let path = this.getMetaPath(ctx);
       if (!fileIo.accessSync(path)) return null;
-      let meta = JSON.parse(fileIo.readTextSync(path)) as ChapterMeta;
+      let meta = ComicLibrary.normalizeMeta(JSON.parse(fileIo.readTextSync(path)) as ChapterMeta);
+      if (!meta.fingerprint) return null;
       this.metaCache.set(ctx.photoId, meta);
       return meta;
     } catch (e) {
@@ -235,14 +587,11 @@ export class ComicLibrary {
     }
   }
 
-  /**
-   * 读取当前已落盘版本的上下文（供「本地秒显」用）。
-   * 优先用 meta.json（真实反映磁盘上的图），缺失时退回清单。
-   */
+  /** 读取当前已落盘版本的上下文（供「本地秒显」用）；索引项就是磁盘 meta.json 的内容 */
   getCurrentContext(photoId: string): LibraryContext | null {
-    let m = this.manifests.get(photoId);
+    let m = this.metaCache.get(photoId);
     if (!m) return null;
-    let ctx: LibraryContext = {
+    return {
       albumId: m.albumId,
       albumName: m.albumName,
       photoId: m.photoId,
@@ -251,21 +600,6 @@ export class ComicLibrary {
       fingerprint: m.fingerprint,
       imgNames: m.imgNames,
     } as LibraryContext;
-    let meta = this.getChapterMeta(ctx);
-    if (meta && meta.imgNames.length > 0) {
-      // 以磁盘元数据为准：它记录的是「这组 PNG 实际对应的内容」
-      ctx.scrambleId = meta.scrambleId;
-      ctx.fingerprint = meta.fingerprint || ComicLibrary.chapterFingerprint(meta.scrambleId, meta.imgNames);
-      ctx.imgNames = meta.imgNames;
-    }
-    return ctx;
-  }
-
-  /** 元数据是否与当前落盘版本不同（需要逐页替换） */
-  isMetaChanged(ctx: LibraryContext): boolean {
-    let m = this.manifests.get(ctx.photoId);
-    if (!m) return true;
-    return m.fingerprint !== ctx.fingerprint;
   }
 
   /** 该章节已落盘的图片数 */
@@ -280,34 +614,55 @@ export class ComicLibrary {
   // ─── 写 ───
 
   /**
-   * 确保某页存在且内容正确（逐页替换的最小单元）。
-   * - 该页文件名与解码参数都没变、且文件已在盘上 → 直接复用
-   * - 否则下载并原子覆盖这一页，其它页不受影响
-   *
-   * 注意：整章指纹变化不代表每一页都变了，这里按「页」判断，
-   * 只替换真正变化的页；替换过程中其它页始终是完整的旧图，可正常阅读。
+   * 确保某页存在：本地有这一页就直接用，没有才下载并原子落盘。
+   * 设置页「刷新内容·图片」开启时，比对已提交版本里这一页的 img_name（及 scramble_id），
+   * 服务器换图就重下覆盖；关闭时不再嗅探，本地有就一直用。
+   * 未提交的章节（下载中断）指纹为空，按同一批处理，不重复下载已完成页。
    */
   async ensureImage(ctx: LibraryContext, index: number, img: JmImageInfo): Promise<string> {
     let path = this.getImagePath(ctx, index);
-    let meta = this.getChapterMeta(ctx);
-    let samePage = meta !== null
-      && meta.scrambleId === ctx.scrambleId
-      && index < meta.imgNames.length
-      && meta.imgNames[index] === img.img_name;
-    if (samePage && fileIo.accessSync(path)) {
-      this.touchManifest(ctx);
-      return path;
+    if (fileIo.accessSync(path)) {
+      if (!CacheManager.isAutoRefresh(CacheManager.CONTENT_IMAGE)) {
+        this.ensureChapterIndex(ctx);
+        return path;
+      }
+      let meta = this.getChapterMeta(ctx);
+      if (meta === null || !ComicLibrary.pageChanged(meta, ctx, index, img.img_name)) {
+        this.ensureChapterIndex(ctx);
+        return path;
+      }
+      return await this.fetchPage(ctx, index, img, path);
     }
     return await this.fetchPage(ctx, index, img, path);
   }
 
+  /** 已落盘版本里这一页是否与服务器当前元数据不同（scramble_id 未知时不参与比较） */
+  private static pageChanged(meta: ChapterMeta, ctx: LibraryContext,
+    index: number, imgName: string): boolean {
+    if (meta.imgNames[index] !== imgName) return true;
+    return meta.scrambleId > 0 && ctx.scrambleId > 0 && meta.scrambleId !== ctx.scrambleId;
+  }
+
   /**
-   * 整章所有页处理完成后调用：写入该章元数据并同步清单。
+   * 整章所有页处理完成后调用：把提交记录写进章节目录的 meta.json。
    * 中途退出不会写 meta，下次进入仍按「逐页」判断，已替换的页不会重复下载。
    */
   commitChapter(ctx: LibraryContext): void {
-    this.writeMeta(ctx);
-    this.updateManifestMeta(ctx);
+    let m = this.metaCache.get(ctx.photoId);
+    let meta: ChapterMeta = {
+      photoId: ctx.photoId,
+      albumId: ctx.albumId,
+      albumName: ctx.albumName,
+      chapterName: ctx.chapterName,
+      scrambleId: ctx.scrambleId,
+      imgNames: ctx.imgNames,
+      fingerprint: ctx.fingerprint,
+      downloadedAt: m ? m.downloadedAt : 0,
+      updatedAt: Date.now(),
+    } as ChapterMeta;
+    this.ensureChapterDir(ctx);
+    this.writeMetaFile(this.getChapterDir(ctx), meta);
+    this.metaCache.set(ctx.photoId, meta);
     // 新元数据页数少于旧版时删除多余页，避免残留旧图
     this.removeExtraPages(ctx, ctx.imgNames.length);
   }
@@ -345,7 +700,7 @@ export class ComicLibrary {
     let originalsDir = this.getOriginalsDir(ctx);
     if (!fileIo.accessSync(originalsDir)) fileIo.mkdirSync(originalsDir, true);
     try {
-      this.atomicWrite(`${originalsDir}/${img.img_name}`, data);
+      ComicLibrary.atomicWrite(`${originalsDir}/${img.img_name}`, data);
     } catch (e) {
       console.warn(`[ComicLibrary] save original failed ${ctx.photoId}/${img.img_name}: ${JSON.stringify(e)}`);
     }
@@ -369,11 +724,11 @@ export class ComicLibrary {
       } as image.PackingOption);
       packer.release();
       // 逐页原子替换：写完即可被读到，读到的永远是完整图
-      this.atomicWrite(destPath, out);
+      ComicLibrary.atomicWrite(destPath, out);
     } finally {
       pm.release();
     }
-    this.touchManifest(ctx);
+    this.ensureChapterIndex(ctx);
     return destPath;
   }
 
@@ -382,20 +737,44 @@ export class ComicLibrary {
     if (!fileIo.accessSync(dir)) fileIo.mkdirSync(dir, true);
   }
 
-  private writeMeta(ctx: LibraryContext): void {
-    try {
-      this.ensureChapterDir(ctx);
-      let meta: ChapterMeta = {
+  /**
+   * 确保索引里有这一章（纯内存操作，不写盘）。
+   * meta.json 只在整章对齐完成后由 commitChapter 写，保持提交标记的语义；
+   * 首次落盘靠目录本身存在即可，重启后由 scanLibrary 重建。
+   */
+  private ensureChapterIndex(ctx: LibraryContext): void {
+    let m = this.metaCache.get(ctx.photoId);
+    if (m === undefined) {
+      this.metaCache.set(ctx.photoId, {
         photoId: ctx.photoId,
-        scrambleId: ctx.scrambleId,
-        imgNames: ctx.imgNames,
-        fingerprint: ctx.fingerprint,
-        updatedAt: Date.now(),
-      } as ChapterMeta;
-      this.atomicWrite(this.getMetaPath(ctx), JSON.stringify(meta));
-      this.metaCache.set(ctx.photoId, meta);
+        albumId: ctx.albumId,
+        albumName: ctx.albumName,
+        chapterName: ctx.chapterName,
+        scrambleId: 0,
+        imgNames: [] as string[],
+        fingerprint: '',
+        downloadedAt: 0,
+        updatedAt: 0,
+      } as ChapterMeta);
+      return;
+    }
+    if (m.albumId === ctx.albumId && m.albumName === ctx.albumName
+      && m.chapterName === ctx.chapterName) {
+      return;
+    }
+    // 服务端改名：索引跟着上下文走，已提交的章节同步落盘
+    m.albumId = ctx.albumId;
+    m.albumName = ctx.albumName;
+    m.chapterName = ctx.chapterName;
+    if (m.fingerprint) this.writeMetaFile(this.getChapterDir(ctx), m);
+  }
+
+  /** 一个章节目录的提交记录：只有这里会写 meta.json */
+  private writeMetaFile(dir: string, meta: ChapterMeta): void {
+    try {
+      ComicLibrary.atomicWrite(`${dir}/meta.json`, JSON.stringify(meta));
     } catch (e) {
-      console.warn(`[ComicLibrary] write meta failed ${ctx.photoId}: ${JSON.stringify(e)}`);
+      console.warn(`[ComicLibrary] write meta failed ${meta.photoId}: ${JSON.stringify(e)}`);
     }
   }
 
@@ -417,99 +796,24 @@ export class ComicLibrary {
     }
   }
 
-  private updateManifestMeta(ctx: LibraryContext): void {
-    let m = this.manifests.get(ctx.photoId);
-    if (!m) {
-      this.touchManifest(ctx);
-      return;
-    }
-    m.fingerprint = ctx.fingerprint;
-    m.scrambleId = ctx.scrambleId;
-    m.imgNames = ctx.imgNames;
-    m.lastReadAt = Date.now();
-    this.writeManifest(ctx, m);
-  }
+  // ─── 生命周期 ───
 
-  // ─── 清单与生命周期 ───
-
-  private touchManifest(ctx: LibraryContext): void {
-    let m = this.manifests.get(ctx.photoId);
-    if (!m) {
-      m = {
-        photoId: ctx.photoId,
-        albumId: ctx.albumId,
-        albumName: ctx.albumName,
-        chapterName: ctx.chapterName,
-        fingerprint: ctx.fingerprint,
-        scrambleId: ctx.scrambleId,
-        imgNames: ctx.imgNames,
-        lastReadAt: Date.now(),
-        downloadedAt: 0,
-        exportedAt: 0,
-      } as ChapterManifest;
-      this.manifests.set(ctx.photoId, m);
-    } else {
-      m.lastReadAt = Date.now();
-      // 章节名可能被用户重命名/服务端改名，保持与当前上下文一致
-      m.albumId = ctx.albumId;
-      m.albumName = ctx.albumName;
-      m.chapterName = ctx.chapterName;
-    }
-    this.writeManifest(ctx, m);
-  }
-
-  private writeManifest(ctx: LibraryContext, m: ChapterManifest): void {
-    try {
-      let dir = this.getManifestDir(m.albumId);
-      if (!fileIo.accessSync(dir)) fileIo.mkdirSync(dir, true);
-      this.atomicWrite(`${dir}/${m.photoId}.json`, JSON.stringify(m));
-    } catch (e) {
-      console.warn(`[ComicLibrary] write manifest failed ${ctx.photoId}: ${JSON.stringify(e)}`);
-    }
-  }
-
-  private deleteManifestFile(albumId: number, photoId: string): void {
-    try {
-      let path = `${this.getManifestDir(albumId)}/${photoId}.json`;
-      if (fileIo.accessSync(path)) fileIo.unlinkSync(path);
-    } catch (e) {
-      console.warn(`[ComicLibrary] delete manifest failed ${photoId}: ${JSON.stringify(e)}`);
-    }
-  }
-
-  getManifest(photoId: string): ChapterManifest | null {
-    return this.manifests.get(photoId) ?? null;
-  }
-
-  getAllManifests(): ChapterManifest[] {
-    let list: ChapterManifest[] = [];
-    this.manifests.forEach((m: ChapterManifest) => list.push(m));
-    return list;
-  }
-
-  /** 标记为手动下载：永不自动清理 */
+  /** 标记为手动下载：不受阅读缓存规则清理，只有导出后 N 天才清 */
   markDownloaded(ctx: LibraryContext): void {
-    let m = this.manifests.get(ctx.photoId);
-    if (!m) {
-      this.touchManifest(ctx);
-      m = this.manifests.get(ctx.photoId);
+    let m = this.metaCache.get(ctx.photoId);
+    if (m === undefined) {
+      this.ensureChapterIndex(ctx);
+      m = this.metaCache.get(ctx.photoId);
     }
-    if (m && m.downloadedAt === 0) {
-      m.downloadedAt = Date.now();
-      this.writeManifest(ctx, m);
-    }
+    if (m === undefined || m.downloadedAt > 0) return;
+    m.downloadedAt = Date.now();
+    m.albumId = ctx.albumId;
+    m.albumName = ctx.albumName;
+    m.chapterName = ctx.chapterName;
+    if (m.fingerprint) this.writeMetaFile(this.getChapterDir(ctx), m);
   }
 
-  markExported(photoId: string, exportedAt: number = Date.now()): void {
-    let m = this.manifests.get(photoId);
-    if (m) {
-      m.exportedAt = exportedAt;
-      let ctx = this.ctxOfManifest(m);
-      this.writeManifest(ctx, m);
-    }
-  }
-
-  private ctxOfManifest(m: ChapterManifest): LibraryContext {
+  private ctxOfMeta(m: ChapterMeta): LibraryContext {
     return {
       albumId: m.albumId,
       albumName: m.albumName,
@@ -521,86 +825,163 @@ export class ComicLibrary {
     } as LibraryContext;
   }
 
-  /** 删除整部漫画的仓库目录（实体 + PNG + 清单全部删除） */
+  /** 删除整部漫画的仓库目录（PNG + meta.json + 封面一起删，记录随目录消失） */
   removeAlbum(albumId: number, albumName: string): void {
     let dir = ComicLibrary.albumDir(albumId, albumName);
+    let photoIds = this.photoIdsOfAlbum(albumId);
     try {
       if (fileIo.accessSync(dir)) fileIo.rmdirSync(dir);
     } catch (e) {
       console.warn(`[ComicLibrary] removeAlbum failed: ${JSON.stringify(e)}`);
     }
-    this.removeManifestsOf(albumId);
+    this.dropIndexOf(albumId);
+    for (let id of photoIds) {
+      this.dropOriginals(id);
+    }
   }
 
-  /** 仅删除该漫画的章节图片（保留 album.json 实体）；用于「导出后自动删除下载缓存」 */
+  /** 仅删除该漫画的章节图片（保留专辑目录）；用于「导出后自动删除下载缓存」 */
   removeAlbumImages(albumId: number, albumName: string): void {
     let root = ComicLibrary.albumDir(albumId, albumName);
     let chaptersDir = `${root}/chapters`;
+    let photoIds = this.photoIdsOfAlbum(albumId);
     try {
       if (fileIo.accessSync(chaptersDir)) fileIo.rmdirSync(chaptersDir);
     } catch (e) {
       console.warn(`[ComicLibrary] removeAlbumImages failed: ${JSON.stringify(e)}`);
     }
-    this.removeManifestsOf(albumId);
+    ComicLibrary.removeLegacyDir(root);
+    this.dropIndexOf(albumId);
+    for (let id of photoIds) {
+      this.dropOriginals(id);
+    }
   }
 
-  private removeManifestsOf(albumId: number): void {
+  private dropIndexOf(albumId: number): void {
     let keys: string[] = [];
-    this.manifests.forEach((m: ChapterManifest, key: string) => {
+    this.metaCache.forEach((m: ChapterMeta, key: string) => {
       if (m.albumId === albumId) keys.push(key);
     });
     for (let key of keys) {
-      this.manifests.delete(key);
       this.metaCache.delete(key);
-    }
-    try {
-      let dir = this.getManifestDir(albumId);
-      if (fileIo.accessSync(dir)) fileIo.rmdirSync(dir);
-    } catch (e) {
-      console.warn(`[ComicLibrary] remove manifests failed ${albumId}: ${JSON.stringify(e)}`);
     }
   }
 
+  /**
+   * 按规则清理。用户态时间都来自 SQL：
+   * - 最后阅读时间 → read_state（tick 与 read_at 取大）
+   * - 导出时间     → pref 的 exported_{albumId}
+   * 目录本身只提供「有什么、是否手动下载」，不参与时间判定，
+   * 因此「取消导出」删掉 pref 键后，这里立刻不再按旧导出时间删文件。
+   */
   async cleanup(rule: CleanupRule): Promise<CleanupResult> {
     let now = Date.now();
-    let toRemove: ChapterManifest[] = [];
-    this.manifests.forEach((m: ChapterManifest) => {
-      if (m.downloadedAt === 0 && rule.readCacheDays > 0
-        && now - m.lastReadAt > rule.readCacheDays * 24 * 60 * 60 * 1000) {
-        toRemove.push(m);
-      } else if (m.downloadedAt > 0 && m.exportedAt > 0 && rule.exportedDays > 0
-        && now - m.exportedAt > rule.exportedDays * 24 * 60 * 60 * 1000) {
-        toRemove.push(m);
+    let day = 24 * 60 * 60 * 1000;
+    let toRemove: ChapterMeta[] = [];
+    // 按专辑分组，一部漫画只查两次库，而不是每章一次
+    let byAlbum: Map<number, ChapterMeta[]> = new Map<number, ChapterMeta[]>();
+    this.metaCache.forEach((m: ChapterMeta) => {
+      let list = byAlbum.get(m.albumId);
+      if (!list) {
+        list = [];
+        byAlbum.set(m.albumId, list);
+      }
+      list.push(m);
+    });
+    byAlbum.forEach((list: ChapterMeta[], albumId: number) => {
+      let exportedAt = this.cache ? this.cache.getAlbumExportedAt(albumId) : 0;
+      let reads: Map<string, number> = this.progress
+        ? this.progress.lastActivityOfAlbum(albumId) : new Map<string, number>();
+      for (let m of list) {
+        if (m.downloadedAt === 0) {
+          if (rule.readCacheDays <= 0) continue;
+          // 没有阅读记录时用目录最后写入时间兜底：正在下载或刚缓存的章节不算旧缓存
+          let last = Math.max(reads.get(m.photoId) ?? 0, this.dirModifiedAt(this.ctxOfMeta(m)));
+          if (now - last > rule.readCacheDays * day) toRemove.push(m);
+        } else if (exportedAt > 0 && rule.exportedDays > 0
+          && now - exportedAt > rule.exportedDays * day) {
+          toRemove.push(m);
+        }
       }
     });
     return await this.removeChapters(toRemove);
   }
 
-  async clearAll(): Promise<CleanupResult> {
-    let all: ChapterManifest[] = [];
-    this.manifests.forEach((m: ChapterManifest) => all.push(m));
-    return await this.removeChapters(all);
+  /** 目录最后写入时间（毫秒）；这是磁盘事实，不是第二份用户态时间 */
+  private dirModifiedAt(ctx: LibraryContext): number {
+    try {
+      let dir = this.getChapterDir(ctx);
+      if (!fileIo.accessSync(dir)) return 0;
+      return fileIo.statSync(dir).mtime * 1000;
+    } catch (e) {
+      return 0;
+    }
   }
 
-  private async removeChapters(list: ChapterManifest[]): Promise<CleanupResult> {
+  async clearAll(): Promise<CleanupResult> {
+    let all: ChapterMeta[] = [];
+    this.metaCache.forEach((m: ChapterMeta) => all.push(m));
+    let result = await this.removeChapters(all);
+    // 章节删完后专辑目录里还留着封面，一并清掉，否则「清空图片仓库」后体积不为 0
+    if (fileIo.accessSync(this.baseDir)) {
+      let dirs = await fileIo.listFile(this.baseDir);
+      for (let name of dirs) {
+        let dir = `${this.baseDir}/${name}`;
+        try {
+          result.removedBytes += await this.dirSize(dir);
+          await fileIo.rmdir(dir);
+        } catch (e) {
+          console.warn(`[ComicLibrary] clearAll dir failed ${name}: ${JSON.stringify(e)}`);
+        }
+      }
+    }
+    // 原始图快照在 cacheDir，不属于图片仓库体积，但「清空图片仓库」时一并清掉
+    try {
+      if (fileIo.accessSync(this.cacheBaseDir)) fileIo.rmdirSync(this.cacheBaseDir);
+    } catch (e) {
+      console.warn(`[ComicLibrary] clear originals failed: ${JSON.stringify(e)}`);
+    }
+    return result;
+  }
+
+  private async removeChapters(list: ChapterMeta[]): Promise<CleanupResult> {
     let result: CleanupResult = { removedChapters: 0, removedBytes: 0 } as CleanupResult;
     for (let m of list) {
-      let ctx = this.ctxOfManifest(m);
+      let ctx = this.ctxOfMeta(m);
       let dir = this.getChapterDir(ctx);
       try {
         if (fileIo.accessSync(dir)) {
           result.removedBytes += await this.dirSize(dir);
           await fileIo.rmdir(dir);
         }
-        this.manifests.delete(m.photoId);
+        // 目录删成功才删索引：失败时留待下次重试，不会出现「记录没了、文件还在」
         this.metaCache.delete(m.photoId);
-        this.deleteManifestFile(m.albumId, m.photoId);
+        this.dropOriginals(m.photoId);
         result.removedChapters++;
       } catch (e) {
         console.warn(`[ComicLibrary] remove chapter failed ${m.photoId}: ${JSON.stringify(e)}`);
       }
     }
     return result;
+  }
+
+  /** 删该章的原始图快照（在 cacheDir，不存在就忽略） */
+  private dropOriginals(photoId: string): void {
+    let dir = `${this.cacheBaseDir}/${photoId}`;
+    try {
+      if (fileIo.accessSync(dir)) fileIo.rmdirSync(dir);
+    } catch (e) {
+      console.warn(`[ComicLibrary] drop originals failed ${photoId}: ${JSON.stringify(e)}`);
+    }
+  }
+
+  /** 该专辑在索引里的所有 photoId（删 originals 用，必须在 dropIndexOf 之前取） */
+  private photoIdsOfAlbum(albumId: number): string[] {
+    let ids: string[] = [];
+    this.metaCache.forEach((m: ChapterMeta) => {
+      if (m.albumId === albumId) ids.push(m.photoId);
+    });
+    return ids;
   }
 
   private async dirSize(dir: string): Promise<number> {
@@ -630,9 +1011,10 @@ export class ComicLibrary {
     }
     fileIo.mkdirSync(stagingRoot, true);
     let chapters = 0;
-    for (let m of this.manifests.values()) {
-      if (m.albumId !== albumId) continue;
-      let ctx = this.ctxOfManifest(m);
+    for (let m of this.metaCache.values()) {
+      // 未提交（下载中断）的目录没有可导出的完整版本，直接跳过，不留空目录
+      if (m.albumId !== albumId || m.imgNames.length === 0) continue;
+      let ctx = this.ctxOfMeta(m);
       let safe = ComicLibrary.sanitizeFileName(m.chapterName || `第${m.photoId}话`);
       let destDir = `${stagingRoot}/${safe}`;
       fileIo.mkdirSync(destDir, true);

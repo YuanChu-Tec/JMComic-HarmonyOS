@@ -1,6 +1,7 @@
 import { display } from '@kit.ArkUI';
 import { ApiService } from '../network/ApiService';
-import { AlbumViewModel, JmAlbumInfo, IAlbumViewModelJSON } from '../models/Album';
+import { AlbumViewModel } from '../models/Album';
+import { AlbumDao } from '../storage/AlbumDao';
 import { CacheManager } from '../common/CacheManager';
 import { navPush, navPop } from '../common/NavHelper';
 import { AlbumDetailParams } from '../common/RouteParams';
@@ -15,10 +16,16 @@ struct SearchPage {
   @State hasMore: boolean = false;
   @State searchHistory: string[] = [];
   @State searchFailed: boolean = false;
+  /** 下拉刷新指示器：只有搜索态下才会亮起 */
+  @State isRefreshing: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private cache: CacheManager | null = null;
+  /** 下拉刷新是否已有一轮在跑：Refresh 只管指示器，挡不住重复触发 */
+  private isPulling: boolean = false;
+  /** 本地结果最近一次落库时间，用来判断是否过期 */
+  private localUpdatedAt: number = 0;
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
 
   // NavDestination 标准入口：参数与数据加载移入 onReady（原 router.getParams 时代在 aboutToAppear）
@@ -75,54 +82,108 @@ struct SearchPage {
       this.searchHistory = this.cache.getSearchHistory();
     }
 
-    // 尝试加载缓存
-    if (this.cache) {
-      let cached = this.cache.loadSearchResult(kw, this.currentPage);
-      if (cached) {
-        let items = AlbumViewModel.fromJSONArray(JSON.parse(cached.data) as IAlbumViewModelJSON[]);
-        if (isNewSearch) {
-          this.albums = items;
-        } else {
-          this.albums = this.albums.concat(items);
-        }
-        this.hasMore = items.length >= 20;
+    // 一进函数就置加载态：读库这几毫秒也别让用户看到空列表
+    this.isLoading = true;
+    this.searchFailed = false;
+
+    // 本地优先：新搜索回放全部已落库页，翻页只看这一页在不在
+    let prefix = `search:${kw}:p`;
+    if (isNewSearch) {
+      let hasLocal = await this.renderFromStore(prefix);
+      if (hasLocal && !this.isStale()) {
+        let pages = await AlbumDao.feedPageNumbers(prefix);
+        this.currentPage = pages.length > 0 ? pages[pages.length - 1] : 1;
+        this.isLoading = false;
+        return;
+      }
+      if (hasLocal) {
+        // 过期：整个关键词的本地结果作废，重新从第一页拉
+        await AlbumDao.clearFeedPrefix(prefix);
+        this.albums = [];
+        this.currentPage = 1;
+      }
+    } else {
+      let cached = await AlbumDao.loadFeed(`${prefix}${this.currentPage}`);
+      if (cached.sections.length > 0 && cached.sections[0].albums.length > 0) {
+        await this.renderFromStore(prefix);
+        this.hasMore = cached.sections[0].albums.length >= 20;
+        this.isLoading = false;
         return;
       }
     }
 
-    this.isLoading = true;
-    this.searchFailed = false;
+    // 本地缺失才走网络
 
     try {
       let resp = await this.apiService.search(kw, this.currentPage);
 
       if (resp.code === 200 && resp.data) {
-        let list = resp.data.content;
-        let vms = list.map(item => {
-          let vm = AlbumViewModel.fromApiInfo(item, '');
-          vm.coverUrl = this.apiService.buildCoverUrl(vm.id);
-          return vm;
-        });
-
-        if (isNewSearch) {
-          this.albums = vms;
-        } else {
-          this.albums = this.albums.concat(vms);
-        }
-
-        this.hasMore = vms.length >= 20;
-
-        // 保存搜索结果缓存
-        if (this.cache) {
-          let data = JSON.stringify(vms.map(vm => vm.toJSON()));
-          this.cache.saveSearchResult(kw, this.currentPage, data, parseInt(resp.data.total) || 0);
-        }
+        // 先落库，再从库读回来渲染
+        await AlbumDao.saveFeed(`${prefix}${this.currentPage}`, resp.data.content, parseInt(resp.data.total) || 0);
+        await this.renderFromStore(prefix);
+        this.hasMore = resp.data.content.length >= 20;
       }
     } catch (err) {
       console.error('search error:', JSON.stringify(err));
       this.searchFailed = true;
     } finally {
       this.isLoading = false;
+    }
+  }
+
+  /** 从库里读出这个关键词的所有分页并渲染 */
+  private async renderFromStore(prefix: string): Promise<boolean> {
+    let snapshots = await AlbumDao.loadFeedPages(prefix);
+    let albums: AlbumViewModel[] = [];
+    this.localUpdatedAt = 0;
+    for (let snapshot of snapshots) {
+      this.localUpdatedAt = Math.max(this.localUpdatedAt, snapshot.updatedAt);
+      if (snapshot.sections.length === 0) continue;
+      for (let album of snapshot.sections[0].albums) {
+        albums.push(AlbumViewModel.fromAlbum(album,
+          this.apiService.coverSource(album.id, '_3x4', album.imageName)));
+      }
+    }
+    this.albums = albums;
+    return albums.length > 0;
+  }
+
+  /** 本地结果是否过期（TTL 由设置页的间隔 + 「搜索列表」开关共同控制） */
+  private isStale(): boolean {
+    return Date.now() - this.localUpdatedAt > CacheManager.feedTtlMsOf(CacheManager.REFRESH_SEARCH);
+  }
+
+  /**
+   * 下拉刷新：仅搜索态可用，用当前关键词从第一页重搜。
+   * 未搜索（只有历史/语法提示）或纯数字（那是跳详情）都没有可刷新的列表。
+   * 与首页同款：不清 this.albums，旧内容留在屏上，落库后由 renderFromStore 整体替换。
+   */
+  private async pullRefresh(): Promise<void> {
+    let kw = this.keyword.trim();
+    if (this.isPulling || !this.hasSearched || kw.length === 0 || /^\d+$/.test(kw)) {
+      this.isRefreshing = false;
+      return;
+    }
+    this.isPulling = true;
+    let prefix = `search:${kw}:p`;
+    try {
+      let resp = await this.apiService.search(kw, 1);
+      if (resp.code === 200 && resp.data) {
+        // 旧分页不再对应这份结果，整批作废后只写新的第一页
+        await AlbumDao.clearFeedPrefix(prefix);
+        await AlbumDao.saveFeedKeepList(`${prefix}1`, resp.data.content, parseInt(resp.data.total) || 0);
+        this.currentPage = 1;
+        this.hasMore = resp.data.content.length >= 20;
+        await this.renderFromStore(prefix);
+      } else {
+        this.showToast('刷新失败，已保留本地内容');
+      }
+    } catch (err) {
+      console.error('[SearchPage] pull refresh error:', JSON.stringify(err));
+      this.showToast('刷新失败，已保留本地内容');
+    } finally {
+      this.isPulling = false;
+      this.isRefreshing = false;
     }
   }
 
@@ -286,6 +347,7 @@ struct SearchPage {
           .justifyContent(FlexAlign.Start)
           .padding({ top: this.topSafeHeight + 56, bottom: this.bottomSafeHeight + 16 })
         } else {
+          Refresh({ refreshing: $$this.isRefreshing }) {
           Scroll() {
             Column() {
               Grid() {
@@ -346,6 +408,12 @@ struct SearchPage {
           .scrollBar(BarState.Off)
           .padding({ top: this.topSafeHeight + 56, bottom: this.bottomSafeHeight + 16 })
           .onReachEnd(() => this.loadMore())
+          }
+          .onRefreshing(() => {
+            this.pullRefresh();
+          })
+          .width('100%')
+          .height('100%')
         }
       }
       .width('100%')

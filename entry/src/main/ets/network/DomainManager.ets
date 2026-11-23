@@ -24,9 +24,13 @@ const PERIODIC_PROBE_INTERVAL = 5 * 60 * 1000;
  *
  * 核心设计（参考 Java JmDomainManager）：
  * 1. 失败计数：每个域名跟踪失败次数，优先选择失败次数最少的域名
- * 2. 并行探活：初始化时并行探测所有域名可达性，标记不可达域名
- * 3. 定期复探：后台定时重新探测已标记为不可达的域名，恢复后自动加入可用池
- * 4. 全死降级：所有域名都不可达时，重置所有计数回退到未探活状态
+ * 2. 粘滞：记住上次成功的域名，只要它还是零失败就一直用，失败后才换下一个
+ * 3. 并行探活：初始化时并行探测所有域名可达性，标记不可达域名
+ * 4. 定期复探：后台定时重新探测已标记为不可达的域名，恢复后自动加入可用池
+ * 5. 全死降级：所有域名都不可达时，重置所有计数回退到未探活状态
+ *
+ * 粘滞是为了让同一份列表在多次刷新间保持在同一个镜像上：
+ * 轮询换域会让相邻两次刷新拿到不同镜像的数据，表现为列表内容每次刷新都变。
  */
 export class DomainManager {
   private apiDomains: string[];
@@ -34,7 +38,10 @@ export class DomainManager {
   private apiFailureCounts: Map<string, number> = new Map();
   private imageFailureCounts: Map<string, number> = new Map();
   private probeTimer: number | null = null;
-  private clusterIndex: number = 0; // Round-robin 辅助
+  private apiClusterIndex: number = 0; // Round-robin 辅助（未粘滞时用）
+  private imageClusterIndex: number = 0;
+  private stickyApiDomain: string | null = null; // 上次成功的 API 域名
+  private stickyImageDomain: string | null = null; // 上次成功的图片域名
   private selectedApiIndex: number = -1; // -1 = 自动选择
   private selectedImageIndex: number = -1; // -1 = 自动选择
 
@@ -48,6 +55,8 @@ export class DomainManager {
   private resetCounts(): void {
     this.apiFailureCounts.clear();
     this.imageFailureCounts.clear();
+    this.stickyApiDomain = null;
+    this.stickyImageDomain = null;
     for (let d of this.apiDomains) {
       this.apiFailureCounts.set(d, 0);
     }
@@ -60,24 +69,32 @@ export class DomainManager {
 
   /**
    * 获取最佳 API 域名
-   * 如果有手动选择则使用手动选择，否则自动选择失败计数最低的
+   * 手动选择优先；否则优先沿用上次成功的域名，只有它失败过才重新选
    */
   getBestApiDomain(): string {
     if (this.selectedApiIndex >= 0 && this.selectedApiIndex < this.apiDomains.length) {
       return this.apiDomains[this.selectedApiIndex];
     }
-    return this.selectBest(this.apiDomains, this.apiFailureCounts);
+    let sticky = this.stickyApiDomain;
+    if (sticky !== null && (this.apiFailureCounts.get(sticky) || 0) === 0) {
+      return sticky;
+    }
+    return this.selectBest(this.apiDomains, this.apiFailureCounts, true);
   }
 
   /**
    * 获取最佳图片 CDN 域名
-   * 如果有手动选择则使用手动选择，否则自动选择
+   * 手动选择优先；否则优先沿用上次成功的域名，只有它失败过才重新选
    */
   getBestImageDomain(): string {
     if (this.selectedImageIndex >= 0 && this.selectedImageIndex < this.imageDomains.length) {
       return this.imageDomains[this.selectedImageIndex];
     }
-    return this.selectBest(this.imageDomains, this.imageFailureCounts);
+    let sticky = this.stickyImageDomain;
+    if (sticky !== null && (this.imageFailureCounts.get(sticky) || 0) === 0) {
+      return sticky;
+    }
+    return this.selectBest(this.imageDomains, this.imageFailureCounts, false);
   }
 
   /** 获取当前 API 线路索引（-1 为自动） */
@@ -104,9 +121,9 @@ export class DomainManager {
 
   /**
    * 核心选择算法：选择失败计数最低的域名
-   * 多个域名同为最低时，使用 round-robin 分散负载
+   * 多个域名同为最低时，使用 round-robin 分散负载（API 与图片各自独立计数）
    */
-  private selectBest(domains: string[], counts: Map<string, number>): string {
+  private selectBest(domains: string[], counts: Map<string, number>, isApi: boolean): string {
     if (domains.length === 0) {
       throw new Error('域名列表为空');
     }
@@ -126,39 +143,51 @@ export class DomainManager {
     }
 
     // Round-robin 从同等最佳中选择
-    this.clusterIndex = (this.clusterIndex + 1) % bestDomains.length;
-    return bestDomains[this.clusterIndex];
+    if (isApi) {
+      this.apiClusterIndex = (this.apiClusterIndex + 1) % bestDomains.length;
+      return bestDomains[this.apiClusterIndex];
+    }
+    this.imageClusterIndex = (this.imageClusterIndex + 1) % bestDomains.length;
+    return bestDomains[this.imageClusterIndex];
   }
 
   // ─── 成功/失败报告 ───
 
-  /** 报告 API 域名请求成功，计数归零 */
+  /** 报告 API 域名请求成功：计数归零，并粘住这个域名 */
   reportApiSuccess(domain: string): void {
     if (this.apiFailureCounts.has(domain)) {
       this.apiFailureCounts.set(domain, 0);
+      this.stickyApiDomain = domain;
     }
   }
 
-  /** 报告 API 域名请求失败，增加失败计数 */
+  /** 报告 API 域名请求失败：增加失败计数，解除粘滞让下次重新选 */
   reportApiFailure(domain: string): void {
     let count = this.apiFailureCounts.get(domain);
     if (count !== undefined) {
       this.apiFailureCounts.set(domain, count + 1);
+      if (this.stickyApiDomain === domain) {
+        this.stickyApiDomain = null;
+      }
     }
   }
 
-  /** 报告图片域名成功 */
+  /** 报告图片域名成功：计数归零，并粘住这个域名 */
   reportImageSuccess(domain: string): void {
     if (this.imageFailureCounts.has(domain)) {
       this.imageFailureCounts.set(domain, 0);
+      this.stickyImageDomain = domain;
     }
   }
 
-  /** 报告图片域名失败 */
+  /** 报告图片域名失败：增加失败计数，解除粘滞让下次重新选 */
   reportImageFailure(domain: string): void {
     let count = this.imageFailureCounts.get(domain);
     if (count !== undefined) {
       this.imageFailureCounts.set(domain, count + 1);
+      if (this.stickyImageDomain === domain) {
+        this.stickyImageDomain = null;
+      }
     }
   }
 

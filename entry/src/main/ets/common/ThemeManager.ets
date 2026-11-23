@@ -15,13 +15,11 @@
  *  - COLOR_MODE_NOT_SET(-1) 不覆盖系统，资源自动在 base/dark 之间切换（即跟随系统）
  */
 import { common, ConfigurationConstant } from '@kit.AbilityKit';
-import { preferences } from '@kit.ArkData';
+import { SettingDao } from '../storage/SettingDao';
 
 export type ThemeModeKey = 'system' | 'light' | 'dark';
 
-/** 持久化偏好文件名 */
-const THEME_PREF_NAME: string = 'JMComicTheme';
-/** 偏好键 */
+/** pref 表中的键 */
 const THEME_MODE_KEY: string = 'themeMode';
 
 /**
@@ -55,6 +53,15 @@ export class ThemeManager {
   private initPromise: Promise<void> | null = null;
 
   /**
+   * 取 Ability 上下文。
+   * 窗口内容尚未加载时 getContext() 返回 undefined，所以优先用 EntryAbility 启动时存下的实例。
+   */
+  private abilityContext(): common.UIAbilityContext {
+    let ctx = AppStorage.get<common.UIAbilityContext>('abilityContext');
+    return ctx !== undefined ? ctx : getContext() as common.UIAbilityContext;
+  }
+
+  /**
    * 初始化：读取持久化的主题偏好并应用。
    * 需在应用启动、Ability 创建时调用一次。
    */
@@ -76,7 +83,7 @@ export class ThemeManager {
       console.warn('[ThemeManager] init error:', JSON.stringify(err));
       // 初始化失败时按跟随系统兜底
       try {
-        let ctx = getContext() as common.UIAbilityContext;
+        let ctx = this.abilityContext();
         ctx.setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
       } catch (_e) {
       }
@@ -87,8 +94,8 @@ export class ThemeManager {
   /** 读取偏好模式，默认 system */
   private async loadMode(): Promise<ThemeModeKey> {
     try {
-      let prefs = await preferences.getPreferences(getContext() as common.UIAbilityContext, THEME_PREF_NAME);
-      let mode = prefs.getSync(THEME_MODE_KEY, 'system') as string;
+      let settings = await SettingDao.getInstance();
+      let mode = settings.get(THEME_MODE_KEY, 'system');
       if (mode === 'light' || mode === 'dark' || mode === 'system') {
         return mode;
       }
@@ -102,7 +109,7 @@ export class ThemeManager {
   /** 读取系统当前是否为深色模式 */
   public isSystemDark(): boolean {
     try {
-      let ctx = getContext() as common.UIAbilityContext;
+      let ctx = this.abilityContext();
       return ctx.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
     } catch (err) {
       console.warn('[ThemeManager] isSystemDark error:', JSON.stringify(err));
@@ -122,7 +129,7 @@ export class ThemeManager {
     let target: ConfigurationConstant.ColorMode = resolveColorMode(mode);
     let shouldSet: boolean = true;
     try {
-      let ctx = getContext() as common.UIAbilityContext;
+      let ctx = this.abilityContext();
       let current: ConfigurationConstant.ColorMode | undefined = ctx.config.colorMode;
       shouldSet = current !== target;
     } catch (err) {
@@ -130,7 +137,7 @@ export class ThemeManager {
     }
     if (shouldSet) {
       try {
-        let ctx = getContext() as common.UIAbilityContext;
+        let ctx = this.abilityContext();
         ctx.setColorMode(target);
       } catch (err) {
         console.warn('[ThemeManager] applyMode setColorMode error:', JSON.stringify(err));
@@ -143,9 +150,8 @@ export class ThemeManager {
   public async setMode(mode: ThemeModeKey): Promise<void> {
     this.applyMode(mode);
     try {
-      let prefs = await preferences.getPreferences(getContext() as common.UIAbilityContext, THEME_PREF_NAME);
-      await prefs.put(THEME_MODE_KEY, mode);
-      await prefs.flush();
+      let settings = await SettingDao.getInstance();
+      settings.set(THEME_MODE_KEY, mode);
     } catch (err) {
       console.warn('[ThemeManager] setMode persist error:', JSON.stringify(err));
     }

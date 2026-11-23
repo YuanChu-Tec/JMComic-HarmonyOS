@@ -1,10 +1,11 @@
 import { RespJmAlbumInfo, JmUserData, JmAlbumSeries, JmPhotoInfo } from './dto/ApiDto';
+import { ComicAlbum } from './ComicAlbum';
 
 /**
  * 应用模型层（应用状态：用户/下载/阅读/视图模型 + respToJmAlbumInfo 转换）
  *
  * API DTO 在 dto/ApiDto.ets（零依赖最底层）。
- * 一部漫画的固有实体与转换在 ComicAlbum.ets，实时数据与评论转换在 ComicAlbumRealtime.ets。
+ * 一部漫画的完整数据模型（album / 章节内容 / 评论 / 章节账本 / 聚合视图）在 ComicAlbum.ets。
  */
 
 // ─── JSON 序列化接口 ───
@@ -64,6 +65,25 @@ export function respToJmAlbumInfo(info: RespJmAlbumInfo): JmAlbumInfo {
     likes: info.likes,
     addtime: info.addtime,
     series: info.series,
+  };
+}
+
+/**
+ * 实体 → 列表项：读库后渲染列表的唯一入口，与 respToJmAlbumInfo 对称。
+ * 网络响应不再直接喂给卡片，一律先落库、再由这个函数产出卡片数据。
+ */
+export function albumToJmAlbumInfo(album: ComicAlbum): JmAlbumInfo {
+  return {
+    id: album.id,
+    name: album.title,
+    author: album.authors,
+    image: album.imageName,
+    description: album.description,
+    category: album.category.title,
+    total_views: album.totalViews,
+    total_picture: album.totalPicture,
+    likes: album.likes,
+    addtime: album.addTime,
   };
 }
 
@@ -129,26 +149,7 @@ export class UserSession {
   }
 }
 
-// ─── 下载/阅读生命周期状态（章节账本）──
-
-/**
- * 章节状态账本：记录某一章的图片版本与生命周期状态。
- * 落盘于 filesDir/JMComic/albums/{albumId}/manifests/{photoId}.json，由 ComicLibrary 读写。
- */
-export interface ChapterManifest {
-  photoId: string;
-  albumId: number;
-  albumName: string;
-  chapterName: string;
-  /** 元数据指纹 = hash(scrambleId + imgNames)，判断是否需要整体换版 */
-  fingerprint: string;
-  /** 当前已落盘 PNG 对应的解码参数（换版后全部页需重下） */
-  scrambleId: number;
-  imgNames: string[];
-  lastReadAt: number;
-  downloadedAt: number;
-  exportedAt: number;
-}
+// ─── 下载生命周期状态 ──
 
 export enum DownloadStatus {
   QUEUED = 'queued',
@@ -247,6 +248,21 @@ export class AlbumViewModel {
     vm.totalViews = info.total_views || '0';
     vm.totalPicture = info.total_picture || '0';
     vm.likes = info.likes || '0';
+    vm.coverUrl = coverUrl;
+    return vm;
+  }
+
+  /** 实体 → 视图模型：读库后渲染卡片用，字段与 fromApiInfo 对齐 */
+  static fromAlbum(album: ComicAlbum, coverUrl: string): AlbumViewModel {
+    let vm = new AlbumViewModel();
+    vm.id = album.id;
+    vm.name = album.title;
+    vm.description = album.description;
+    vm.author = album.authors.length === 1 ? album.authors[0] : album.authors.join(', ');
+    vm.category = album.category.title;
+    vm.totalViews = album.totalViews || '0';
+    vm.totalPicture = album.totalPicture || '0';
+    vm.likes = album.likes || '0';
     vm.coverUrl = coverUrl;
     return vm;
   }

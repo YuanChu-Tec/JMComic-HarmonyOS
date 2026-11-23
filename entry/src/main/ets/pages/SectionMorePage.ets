@@ -1,10 +1,14 @@
 import { display } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { ApiService } from '../network/ApiService';
-import { JmAlbumInfo, respToJmAlbumInfo } from '../models/Album';
+import { JmAlbumInfo, albumToJmAlbumInfo } from '../models/Album';
 import { RespJmAlbumInfo, JmPromoteSection } from '../models/dto/ApiDto';
+import { ComicAlbum } from '../models/ComicAlbum';
+import { FEED_HOME_LATEST, FEED_HOME_PROMOTE } from '../models/AlbumFeed';
+import { AlbumDao } from '../storage/AlbumDao';
+import { CacheManager } from '../common/CacheManager';
 import { JmAlbumCard } from './JmAlbumCard';
-import { SECTION_SOURCE_LATEST, SECTION_SOURCE_PROMOTE } from '../common/Constants';
+import { MORE_FEED_PREFIX, SECTION_SOURCE_LATEST, SECTION_SOURCE_PROMOTE } from '../common/Constants';
 import { navPop } from '../common/NavHelper';
 // 参数形状复用中央定义（原本地 interface SectionMorePageParams）
 import { SectionMoreParams } from '../common/RouteParams';
@@ -19,7 +23,8 @@ const MORE_TAG: string = 'SectionMore';
 struct SectionMorePage {
   @State albums: JmAlbumInfo[] = [];
   @State sectionTitle: string = '';
-  @State isLoading: boolean = false;
+  // 初值 true：首次安装库为空时，读库这几毫秒也要有加载指示而不是空白
+  @State isLoading: boolean = true;
   @State loadFailed: boolean = false;
   @State hasMore: boolean = true;
   // 首屏内容高度 / Scroll 可视高度，用于判断是否需要主动续加载
@@ -29,11 +34,21 @@ struct SectionMorePage {
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
   private currentPage: number = 1;
   private source: string = '';
+  private feedKey: string = '';
+  private sectionKey: string = '';
+  /** 更多页在库里的键前缀：more:{feedKey}:{sectionKey}:p */
+  private morePrefix: string = '';
   private apiService: ApiService = ApiService.getInstance();
+  /** 本地列表最近一次落库时间，用来判断是否过期 */
+  private localUpdatedAt: number = 0;
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
   @State showBackTop: boolean = false;
+  /** 下拉刷新指示器：用户显式拉取，与首屏 isLoading 分开 */
+  @State isRefreshing: boolean = false;
   private scroller: Scroller = new Scroller();
   private isBackTopScrolling: boolean = false;
+  /** 下拉刷新是否已有一轮在跑：Refresh 只管指示器，挡不住重复触发 */
+  private isPulling: boolean = false;
 
   // NavDestination 标准入口：参数与数据加载移入 onReady（原 router.getParams 时代在 aboutToAppear）
   private onPageReady(ctx: NavDestinationContext): void {
@@ -42,11 +57,11 @@ struct SectionMorePage {
       if (params.sectionTitle) {
         this.sectionTitle = params.sectionTitle;
       }
-      if (params.initialAlbums && params.initialAlbums.length > 0) {
-        // 直接使用首页已加载的分区数据，无需重新请求；
-        // 首屏同样要按 id 去重：ForEach 以 id 为 key，重复 id 会导致渲染异常
-        let mapped = params.initialAlbums.map((item: RespJmAlbumInfo) => respToJmAlbumInfo(item));
-        this.albums = this.dedupeAlbums(mapped);
+      if (params.feedKey) {
+        this.feedKey = params.feedKey;
+      }
+      if (params.sectionKey) {
+        this.sectionKey = params.sectionKey;
       }
       // 优先使用首页显式传入的来源
       if (params.source) {
@@ -57,13 +72,67 @@ struct SectionMorePage {
       // 兼容旧调用：未传 source 时按标题兜底推断
       this.source = this.sectionTitle === '最新上传' ? SECTION_SOURCE_LATEST : SECTION_SOURCE_PROMOTE;
     }
-    // 首页数据对应第 0 页，后续从第 1 页继续加载
-    this.currentPage = 1;
-    // 无传入数据时（异常进入）从第 0 页拉取兜底
-    if (this.albums.length === 0) {
-      this.currentPage = 0;
-      this.loadAlbums();
+    if (!this.feedKey) {
+      this.feedKey = this.source === SECTION_SOURCE_LATEST ? FEED_HOME_LATEST : FEED_HOME_PROMOTE;
     }
+    if (!this.sectionKey) {
+      this.sectionKey = this.feedKey;
+    }
+    this.morePrefix = `${MORE_FEED_PREFIX}${this.feedKey}:${this.sectionKey}:p`;
+    this.loadFirst();
+  }
+
+  /** 首屏：先读库回放，本地缺失或过期才联网拉第 0 页 */
+  private async loadFirst(): Promise<void> {
+    let hasLocal = await this.renderFromStore();
+    if (hasLocal && !this.isStale()) {
+      this.isLoading = false;
+      let pages = await this.loadedPageNumbers();
+      // 首页分区即第 0 页；本地已有的更多页最大页码 +1 才是下一页
+      this.currentPage = pages.length > 0 ? pages[pages.length - 1] + 1 : 1;
+      return;
+    }
+    if (hasLocal) {
+      // 过期：更多页作废，从第 0 页重拉（源列表分区的数据保留在首页 feed 里）
+      this.isLoading = true;
+      await AlbumDao.clearFeedPrefix(this.morePrefix);
+      this.albums = [];
+    }
+    this.currentPage = 0;
+    await this.loadAlbums();
+  }
+
+  /** 本地列表是否过期（间隔与开关都由设置页控制；更多页跟随首页） */
+  private isStale(): boolean {
+    return Date.now() - this.localUpdatedAt > CacheManager.feedTtlMsOf(CacheManager.REFRESH_HOME);
+  }
+
+  /** 从库里拼出整个列表：源列表分区（首屏）+ 已落库的更多页 */
+  private async renderFromStore(): Promise<boolean> {
+    let albums: ComicAlbum[] = [];
+    let source = await AlbumDao.loadFeed(this.feedKey);
+    this.localUpdatedAt = source.updatedAt;
+    for (let section of source.sections) {
+      if (section.key === this.sectionKey) {
+        albums = albums.concat(section.albums);
+        break;
+      }
+    }
+    let pages = await this.loadedPageNumbers();
+    for (let page of pages) {
+      let snapshot = await AlbumDao.loadFeed(`${this.morePrefix}${page}`);
+      if (snapshot.sections.length > 0) {
+        this.localUpdatedAt = Math.max(this.localUpdatedAt, snapshot.updatedAt);
+        albums = albums.concat(snapshot.sections[0].albums);
+      }
+    }
+    this.albums = this.dedupeAlbums(albums.map((album: ComicAlbum) => albumToJmAlbumInfo(album)));
+    return this.albums.length > 0;
+  }
+
+  /** 已落库的更多页页码，升序（用于恢复翻到了第几页） */
+  private async loadedPageNumbers(): Promise<number[]> {
+    return AlbumDao.feedPageNumbers(this.morePrefix);
   }
 
   /**
@@ -85,30 +154,41 @@ struct SectionMorePage {
   }
 
   async loadAlbums(): Promise<void> {
-    if (this.isLoading || !this.hasMore) return;
+    // 是否在加载由调用方（loadMore / tryAutoLoad）判断：这里不能再挡，
+    // 否则首屏进网络分支时 isLoading 已是 true，会被自己拦死
+    if (!this.hasMore) return;
+    let page = this.currentPage;
+    let pageKey = `${this.morePrefix}${page}`;
+    // 1. 本地已有这一页：直接用，不联网
+    let cached = await AlbumDao.loadFeed(pageKey);
+    if (cached.sections.length > 0 && cached.sections[0].albums.length > 0) {
+      await this.renderFromStore();
+      this.currentPage = page + 1;
+      this.isLoading = false;
+      return;
+    }
+    // 2. 本地缺失才走网络
     this.isLoading = true;
     this.loadFailed = false;
-    let newItems: JmAlbumInfo[] = [];
     try {
+      let items: RespJmAlbumInfo[] = [];
       if (this.source === SECTION_SOURCE_LATEST) {
-        let resp = await this.apiService.getLatest(this.currentPage);
-        hilog.info(0, MORE_TAG, `latest page=${this.currentPage} code=${resp.code} dataLen=${resp.data ? (resp.data as RespJmAlbumInfo[]).length : -1}`);
+        let resp = await this.apiService.getLatest(page);
+        hilog.info(0, MORE_TAG, `latest page=${page} code=${resp.code} dataLen=${resp.data ? (resp.data as RespJmAlbumInfo[]).length : -1}`);
         if (resp.code === 200 && resp.data) {
-          let list = resp.data as RespJmAlbumInfo[];
-          newItems = list.map((item: RespJmAlbumInfo) => respToJmAlbumInfo(item));
+          items = resp.data as RespJmAlbumInfo[];
         } else {
           this.loadFailed = true;
         }
       } else {
-        let resp = await this.apiService.getPromote(this.currentPage);
+        let resp = await this.apiService.getPromote(page);
         let sections = resp.code === 200 && resp.data ? resp.data as JmPromoteSection[] : [];
         let matched = sections.filter((s: JmPromoteSection) => s.title === this.sectionTitle);
-        hilog.info(0, MORE_TAG, `promote page=${this.currentPage} code=${resp.code} sections=${sections.map((s: JmPromoteSection) => `${s.title}(${s.content ? s.content.length : 0})`).join('|')} matched=${matched.length}`);
+        hilog.info(0, MORE_TAG, `promote page=${page} code=${resp.code} sections=${sections.map((s: JmPromoteSection) => `${s.title}(${s.content ? s.content.length : 0})`).join('|')} matched=${matched.length}`);
         if (resp.code === 200 && resp.data) {
           for (let section of sections) {
             if (section.title === this.sectionTitle) {
-              let list = section.content || [];
-              newItems = list.map((item: RespJmAlbumInfo) => respToJmAlbumInfo(item));
+              items = section.content || [];
               break;
             }
           }
@@ -116,31 +196,20 @@ struct SectionMorePage {
           this.loadFailed = true;
         }
       }
-      if (!this.loadFailed) {
-        if (newItems.length > 0) {
-          // 去重合并：避免 ForEach key 重复
-          let map = new Map<number, JmAlbumInfo>();
-          for (let album of this.albums) {
-            map.set(album.id, album);
-          }
-          let before = map.size;
-          for (let album of newItems) {
-            // 跳过无效 id，避免 ForEach key 变成 0；若整页都无效，下面会判定为没有更多
-            if (album.id > 0) {
-              map.set(album.id, album);
-            }
-          }
-          if (map.size > before) {
-            this.albums = Array.from(map.values());
-            this.currentPage++;
-          } else {
-            // 返回内容与已有数据完全重复（promote 接口不分页，翻页返回同内容），标记结束
-            hilog.info(0, MORE_TAG, `all duplicated, set hasMore=false`);
-            this.hasMore = false;
-          }
-        } else {
-          this.hasMore = false;
-        }
+      if (this.loadFailed) return;
+      if (items.length === 0) {
+        this.hasMore = false;
+        return;
+      }
+      // 3. 先落库，再从库读回来渲染
+      let before = this.albums.length;
+      await AlbumDao.saveFeed(pageKey, items, -1);
+      await this.renderFromStore();
+      this.currentPage = page + 1;
+      if (this.albums.length <= before) {
+        // 返回内容与已有数据完全重复（promote 接口不分页，翻页返回同内容），标记结束
+        hilog.info(0, MORE_TAG, 'all duplicated, set hasMore=false');
+        this.hasMore = false;
       }
     } catch (err) {
       console.error('[SectionMorePage] load error:', JSON.stringify(err));
@@ -154,6 +223,55 @@ struct SectionMorePage {
     hilog.info(0, MORE_TAG, `loadMore triggered: isLoading=${this.isLoading} hasMore=${this.hasMore} loadFailed=${this.loadFailed} currentPage=${this.currentPage} albums=${this.albums.length}`);
     if (this.isLoading || !this.hasMore || this.loadFailed) return;
     this.loadAlbums();
+  }
+
+  /**
+   * 下拉刷新：该分区从第 0 页重拉。
+   * 与首页同款：不清 this.albums、不置 isLoading，旧内容留在屏上，
+   * 落库后由 renderFromStore 整体替换。源分区留在首页 feed 里，不清。
+   */
+  private async pullRefresh(): Promise<void> {
+    if (this.isPulling) {
+      this.isRefreshing = false;
+      return;
+    }
+    this.isPulling = true;
+    try {
+      let items: RespJmAlbumInfo[] | null = null;
+      if (this.source === SECTION_SOURCE_LATEST) {
+        let resp = await this.apiService.getLatest(0);
+        if (resp.code === 200 && resp.data) {
+          items = resp.data as RespJmAlbumInfo[];
+        }
+      } else {
+        let resp = await this.apiService.getPromote(0);
+        if (resp.code === 200 && resp.data) {
+          items = [];
+          for (let section of resp.data as JmPromoteSection[]) {
+            if (section.title === this.sectionTitle) {
+              items = section.content || [];
+              break;
+            }
+          }
+        }
+      }
+      if (items === null) {
+        this.getUIContext().getPromptAction().showToast({ message: '刷新失败，已保留本地内容', duration: 2000 });
+        return;
+      }
+      await AlbumDao.clearFeedPrefix(this.morePrefix);
+      if (items.length > 0) {
+        await AlbumDao.saveFeedKeepList(`${this.morePrefix}0`, items, -1);
+      }
+      this.currentPage = 1;
+      this.hasMore = items.length > 0;
+      await this.renderFromStore();
+    } catch (err) {
+      console.error('[SectionMorePage] pull refresh error:', JSON.stringify(err));
+    } finally {
+      this.isPulling = false;
+      this.isRefreshing = false;
+    }
   }
 
   /**
@@ -229,6 +347,7 @@ struct SectionMorePage {
           .height('100%')
           .justifyContent(FlexAlign.Center)
         } else {
+          Refresh({ refreshing: $$this.isRefreshing }) {
           Scroll(this.scroller) {
             Column() {
               // 参考 SearchPage：Grid 按屏宽分列（手机 2 列 / 平板 4 列），
@@ -310,6 +429,12 @@ struct SectionMorePage {
               this.showBackTop = false;
             }
           })
+          }
+          .onRefreshing(() => {
+            this.pullRefresh();
+          })
+          .width('100%')
+          .height('100%')
         }
       }
       .width('100%')
