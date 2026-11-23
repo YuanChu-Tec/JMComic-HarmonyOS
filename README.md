@@ -31,13 +31,13 @@
 
 ## 项目简介
 
-JMComic-HarmonyOS 是基于 **ArkTS / ArkUI** 构建的 **HarmonyOS 漫画客户端**，包名 `com.yuanchu.jmcomic`，目标设备覆盖手机、平板、2in1、车机、穿戴、TV。项目从 JMComic 的 Python / Java / QT 生态移植而来，完整复刻了核心数据链路（API 加解密、图片 scramble 解码、域名故障转移等）。
+JMComic-HarmonyOS 是基于 **ArkTS / ArkUI** 构建的 **HarmonyOS 漫画客户端**，包名 `com.YuanChu.JMComic`，目标设备覆盖手机、平板、2in1、车机、穿戴、TV。项目从 JMComic 的 Python / Java / QT 生态移植而来，完整复刻了核心数据链路（API 加解密、图片 scramble 解码、域名故障转移等）。
 
 | 属性 | 值 |
 |------|-----|
-| 包名 | com.yuanchu.jmcomic |
-| 版本 | 1.0.8 (versionCode: 1000008) |
-| 最低兼容 SDK | 6.1.0(23) |
+| 包名 | com.YuanChu.JMComic |
+| 版本 | 1.1.0 (versionCode: 1010000) |
+| 最低兼容 SDK | 6.1.1(24) |
 | 目标 SDK | 26.0.0 |
 | 应用类型 | Stage 模型 + ArkTS |
 | 许可证 | GPL-3.0 |
@@ -45,21 +45,23 @@ JMComic-HarmonyOS 是基于 **ArkTS / ArkUI** 构建的 **HarmonyOS 漫画客户
 核心技术选型：
 
 - **UI 框架** — ArkUI 声明式 UI（`@Component` / `@State` / `@StorageProp`），HdsTabs 悬浮页签
+- **页面路由** — Navigation + NavPathStack，子页经系统路由表 `router_map.json` 注册
 - **网络层** — `@kit.NetworkKit` http，封装 Cookie 会话管理与失败重试
 - **域名管理** — 多 API / 图片 CDN 域名故障转移，失败计数 + 并行探活 + 定期复探
 - **加密体系** — MD5 Token 签名 + AES-256-ECB 响应数据解密（`@kit.CryptoArchitectureKit`）
-- **图片解码** — scramble 分割还原算法（TaskPool 并行），磁盘 PNG 缓存 + 视口预加载
-- **持久化** — Preferences 键值存储（列表缓存、搜索历史、阅读进度、下载任务）
-- **分享与通知** — 系统分享（ShareKit）+ 通知栏下载进度（NotificationKit）
+- **图片解码** — scramble 分割还原算法（TaskPool 并行），统一图片仓库 + 视口预加载
+- **持久化** — RDB（relationalStore）存漫画实体、列表顺序、阅读进度与账号；Preferences 已移除
+- **图片存储** — ComicLibrary 统一仓库，阅读 / 下载 / 导出共用一份 PNG，逐页原子替换
+- **分享与导出** — 系统分享（ShareKit）、通知栏下载进度（NotificationKit）、ZIP 导出（zlib + DocumentViewPicker）
 
 ---
 
 ## 功能特性
 
-- **首页**：最新上传 + 推荐分区横向滑动
+- **首页**：最新上传 + 推荐分区横向滑动；分区「更多」页首屏复用首页数据，触底继续加载
 - **分类浏览**：同人 / 单本 / 短篇 / 韩漫 / 美漫 / Cosplay / 3D / 英文站，支持多种排序（最新、最多观看、最多图片、月/周/日排行）
-- **搜索**：关键词搜索 + 无上限搜索历史
-- **漫画详情**：作者、标签、系列（章节）列表、相关作品，收藏夹管理
+- **搜索**：关键词搜索 + 无上限搜索历史（长列表可滚动）
+- **漫画详情**：作者、标签、系列（章节）列表、相关作品，收藏夹管理；本地优先渲染 + 下拉刷新
 - **图片阅读器**：
   - 整本竖排拼接滚动，支持双指缩放（0.5x ~ 3.0x）
   - scramble 加密图片自动解码还原
@@ -67,12 +69,15 @@ JMComic-HarmonyOS 是基于 **ArkTS / ArkUI** 构建的 **HarmonyOS 漫画客户
   - 章节阅读进度自动记录，返回列表显示「看过」标记
   - 三种阅读模式一键切换：竖向滚动 / 横向翻页（左→右，西漫）/ 横向翻页（右→左，日漫），底部箭头按钮带旋转动画指示当前方向，并记忆上次选择
   - 横向翻页模式进入即定位到上次阅读页（基于 Swiper 初始索引瞬跳，无逐页滑动）
-- **收藏与历史**：收藏夹分组、观看历史自动同步
-- **登录**：账号密码登录，凭据自动保存与自动登录
-- **下载管理**：章节下载队列（暂停 / 继续 / 删除），通知栏展示下载进度
+  - 底栏滑杆直接跳页，页码可拖到末页
+- **收藏与历史**：收藏夹分组、观看历史自动同步，支持批量删除观看记录
+- **登录与账号**：账号密码登录、记住密码与自动登录；多账号列表 / 切换 / 退出；冷启动先用本地会话快照点亮登录态，再静默复验
+- **下载管理**：章节任务队列（暂停 / 继续 / 删除），按专辑分组并可按「全部 / 未导出 / 已导出」筛选；管理态支持全选、批量导出、批量删除；通知栏展示下载进度
+- **导出**：把专辑图片打包为 ZIP，经系统保存对话框选择落盘位置
+- **设置**：黑白模式、刷新间隔与自动刷新范围、图片仓库占用与清空、阅读缓存 / 已导出内容保留天数、清理缓存、清除阅读页码
 - **讨论区**：评论浏览、多模式筛选、登录后回复
-- **分享**：系统分享面板分享漫画详情
-- **清理缓存**：一键清空 filesDir 与 cacheDir
+- **分享与更新**：系统分享面板分享漫画详情；启动时检查 GitHub Release 新版本
+- **本地优先**：列表、详情、评论先读本地库渲染，超过刷新间隔再联网更新
 
 ---
 
@@ -92,32 +97,53 @@ JMComic/
 │   │   │   └── EntryAbility.ets           # UIAbility 生命周期、沉浸式窗口、安全区
 │   │   ├── entrybackupability/
 │   │   │   └── EntryBackupAbility.ets     # 应用备份扩展
-│   │   ├── pages/                         # 页面层（8 个路由页面）
-│   │   │   ├── Index.ets                  # 主入口（首页 / 分类 / 讨论区 / 个人中心）
+│   │   ├── pages/                         # 页面层（1 个 @Entry + 10 个 NavDestination）
+│   │   │   ├── Index.ets                  # 唯一 @Entry：Navigation 根容器 + 四 Tab + 顶部栏
 │   │   │   ├── SearchPage.ets             # 搜索页
 │   │   │   ├── AlbumDetailPage.ets        # 漫画详情页（分享 / 下载 / 通知）
 │   │   │   ├── ImageViewerPage.ets        # 图片阅读器
 │   │   │   ├── LoginPage.ets              # 登录页
-│   │   │   ├── DownloadPage.ets           # 下载管理页
+│   │   │   ├── DownloadPage.ets           # 下载管理页（分组 / 筛选 / 导出）
 │   │   │   ├── AlbumCommentPage.ets       # 评论区
-│   │   │   └── AboutPage.ets              # 关于 / 防失联
+│   │   │   ├── AboutPage.ets              # 关于 / 防失联 / 检查更新
+│   │   │   ├── SettingsPage.ets           # 设置页
+│   │   │   ├── AccountManagePage.ets      # 多账号管理
+│   │   │   ├── SectionMorePage.ets        # 首页分区「更多」
+│   │   │   └── JmAlbumCard.ets            # 列表卡片组件
 │   │   ├── models/
-│   │   │   └── Album.ets                  # 数据模型（专辑 / 章节 / 图片 / 任务）
+│   │   │   ├── dto/ApiDto.ets             # 服务器契约 DTO（专辑 / 图片 / 评论）
+│   │   │   ├── ComicAlbum.ets             # 漫画实体 + AlbumViewModel
+│   │   │   ├── AlbumFeed.ets              # 列表顺序（feed / 分区 / id 序）
+│   │   │   └── Album.ets                  # 运行时模型（下载任务 / 登录会话）
 │   │   ├── network/
 │   │   │   ├── ApiService.ets             # API 服务层（单例，全部接口封装）
 │   │   │   ├── DomainManager.ets          # 域名故障转移
-│   │   │   ├── HttpClient.ets             # HTTP 客户端（Cookie / 重试）
-│   │   │   └── DownloadService.ets        # 下载任务队列
+│   │   │   ├── HttpClient.ets             # HTTP 客户端（Cookie / 重试 / 体积上限）
+│   │   │   └── DownloadService.ets        # 章节下载任务队列（单引擎）
+│   │   ├── storage/
+│   │   │   ├── AppDatabase.ets            # RDB 建库与 DDL
+│   │   │   ├── AlbumDao.ets               # 漫画实体 / 章节
+│   │   │   ├── FeedDao.ets                # 列表顺序
+│   │   │   ├── ProgressDao.ets            # 阅读进度
+│   │   │   ├── PageCacheDao.ets           # 分页响应快照（带 TTL）
+│   │   │   ├── SettingDao.ets             # 开关与偏好
+│   │   │   └── AccountDao.ets             # 已保存账号
 │   │   └── common/
 │   │       ├── Constants.ets              # 全局常量（域名 / 分类 / 密钥 / 端点）
 │   │       ├── CryptoUtils.ets            # Token 签名 + AES 解密
 │   │       ├── ImageDecodeUtils.ets       # scramble 图片解码
-│   │       ├── DecodedImageCache.ets      # 已解码图片磁盘缓存
-│   │       ├── DownloadManager.ets        # 整本下载 + 通知栏进度
-│   │       ├── CacheManager.ets           # Preferences 缓存管理
-│   │       ├── CommentItem.ets            # 评论项组件
-│   │       └── MenuPopup.ets              # 菜单 / 路由弹窗
-│   └── src/main/resources/                # 资源（颜色 / 字符串 / 图片 / 深色主题）
+│   │       ├── ComicLibrary.ets           # 统一图片仓库（PNG / meta.json / 原子替换）
+│   │       ├── CacheManager.ets           # RDB 缓存门面（列表 / 偏好 / 进度）
+│   │       ├── AccountManager.ets         # 多账号 + 会话快照 + 自动登录
+│   │       ├── DownloadNotifier.ets       # 下载进度通知（节流）
+│   │       ├── ZipExporter.ets            # 专辑 ZIP 导出
+│   │       ├── NavHelper.ets              # Navigation 跳转（push / replace / pop）
+│   │       ├── RouteParams.ets            # 路由参数具名接口
+│   │       ├── ThemeManager.ets           # 主题（跟随系统 / 浅色 / 深色）
+│   │       ├── ThemeSetting.ets           # 设置页「黑白模式」组件
+│   │       ├── UpdateManager.ets          # 版本检查（GitHub Release）
+│   │       └── CommentItem.ets            # 评论项组件
+│   └── src/main/resources/                # 资源（颜色 / 字符串 / 图片 / 深色主题 / 路由表）
 └── hvigor/                                # Hvigor 构建配置
 ```
 
@@ -129,10 +155,13 @@ JMComic/
 │   Index, SearchPage, AlbumDetailPage, ...   │
 ├─────────────────────────────────────────────┤
 │            Service Layer                     │
-│   ApiService / DownloadService / Manager    │
+│   ApiService / DownloadService / Account    │
+├─────────────────────────────────────────────┤
+│             Storage Layer                    │
+│   AppDatabase / *Dao / CacheManager          │
 ├─────────────────────────────────────────────┤
 │          Infrastructure Layer                │
-│   HttpClient / DomainManager / CacheManager │
+│   HttpClient / DomainManager / ComicLibrary  │
 ├─────────────────────────────────────────────┤
 │             Utils Layer                      │
 │   CryptoUtils / ImageDecodeUtils / ...      │
@@ -140,6 +169,8 @@ JMComic/
 │        HarmonyOS Kit（ArkUI / Network / ...）│
 └─────────────────────────────────────────────┘
 ```
+
+数据流向是「网络 → 表 → UI」：响应只落库，页面写完再读一次表，UI 不直接持有服务器对象。
 
 ---
 
@@ -150,14 +181,14 @@ JMComic/
 | Kit | 用途 |
 |-----|------|
 | `@kit.AbilityKit` | UIAbility 生命周期、getContext、wantAgent（通知点击跳转） |
-| `@kit.ArkUI` | 声明式 UI 框架（@Component, @State, @StorageProp, Tabs, Scroll） |
+| `@kit.ArkUI` | 声明式 UI 框架（@Component, @State, @StorageProp, Navigation, Tabs, Scroll） |
 | `@kit.ArkTS` | 语言运行时、util（MD5 hex 转换）、taskpool（并行解码） |
 | `@kit.NetworkKit` | HTTP 请求（@ohos.net.http） |
-| `@kit.ArkData` | Preferences 持久化、uniformTypeDescriptor（分享类型） |
-| `@kit.CoreFileKit` | 文件 I/O（fileIo）、DocumentViewPicker（文件选择） |
+| `@kit.ArkData` | RDB（relationalStore）持久化、uniformTypeDescriptor（分享类型） |
+| `@kit.CoreFileKit` | 文件 I/O（fileIo）、DocumentViewPicker（文件选择 / 保存） |
 | `@kit.ImageKit` | 图片解码（PixelMap / ImageSource / ImagePacker） |
 | `@kit.CryptoArchitectureKit` | MD5、AES-256-ECB（Token 与响应解密） |
-| `@kit.BasicServicesKit` | 剪贴板（pasteboard）、设备信息（deviceInfo）、BusinessError |
+| `@kit.BasicServicesKit` | 剪贴板（pasteboard）、设备信息（deviceInfo）、zlib（ZIP 导出）、BusinessError |
 | `@kit.NotificationKit` | 通知栏下载进度（downloadTemplate） |
 | `@kit.ShareKit` | 系统分享面板（ShareController） |
 | `@kit.PerformanceAnalysisKit` | 日志（hilog） |
@@ -176,27 +207,43 @@ JMComic/
 
 ## 模块目录说明
 
-### pages/ — 页面层（8 个路由页面）
+### pages/ — 页面层（1 个 @Entry + 10 个 NavDestination）
 
 | 文件 | 功能 |
 |------|------|
-| `Index.ets` | 主入口页：HdsTabs 悬浮页签承载首页 / 分类 / 讨论区 / 个人中心；沉浸式顶部栏；线路切换 |
-| `SearchPage.ets` | 关键词搜索、搜索历史（Flex 自动换行展示） |
-| `AlbumDetailPage.ets` | 漫画详情：作者 / 标签 / 章节列表 / 收藏 / 分享 / 阅读进度 |
-| `ImageViewerPage.ets` | 图片阅读器：整本拼接滚动、缩放、scramble 解码、预加载、进度追踪 |
-| `LoginPage.ets` | 账号密码登录 |
-| `DownloadPage.ets` | 下载任务管理（暂停 / 继续 / 删除） |
-| `AlbumCommentPage.ets` | 评论区 |
-| `AboutPage.ets` | 关于页（防失联入口） |
+| `Index.ets` | 唯一 @Entry：Navigation 根容器 + HdsTabs 四个 Tab（首页 / 分类 / 讨论区 / 个人中心）；沉浸式顶部栏；线路选择半模态 |
+| `SearchPage.ets` | 关键词搜索、搜索历史（无上限，长列表可滚动） |
+| `AlbumDetailPage.ets` | 漫画详情：作者 / 标签 / 章节列表 / 收藏 / 分享 / 阅读进度，本地优先 + 下拉刷新 |
+| `ImageViewerPage.ets` | 图片阅读器：整本拼接滚动、缩放、scramble 解码、预加载、进度追踪、滑杆跳页 |
+| `LoginPage.ets` | 账号密码登录、记住密码、跳转账号管理 |
+| `DownloadPage.ets` | 下载管理：按专辑分组、已导出筛选、管理态批量导出 / 删除 |
+| `AlbumCommentPage.ets` | 评论区，本地优先 + 下拉刷新 |
+| `AboutPage.ets` | 关于 / 防失联 / 版本检查 |
+| `SettingsPage.ets` | 设置：主题、刷新间隔与范围、图片仓库与保留策略、清理缓存、清除阅读页码 |
+| `AccountManagePage.ets` | 多账号列表 / 切换 / 退出登录 |
+| `SectionMorePage.ets` | 首页分区「更多」：首屏复用首页数据，触底续拉 |
+| `JmAlbumCard.ets` | 列表卡片组件（首页 / 分类 / 搜索 / 收藏共用） |
 
 ### network/ — 网络层
 
 | 文件 | 职责 |
 |------|------|
-| `HttpClient.ets` | HTTP 封装：全局 Cookie 管理（重要 Cookie 优先）、自动解析 Set-Cookie、失败重试、二进制下载 |
+| `HttpClient.ets` | HTTP 封装：全局 Cookie 管理（重要 Cookie 优先）、自动解析 Set-Cookie、失败重试、响应体积上限、BOM 清洗 |
 | `DomainManager.ets` | 域名故障转移：失败计数、并行探活、定期复探（5 分钟）、全死降级、手动指定线路 |
 | `ApiService.ets` | 单例 API 服务：Token 签名头、响应 AES 解密、全部业务接口（搜索 / 详情 / 章节 / 收藏 / 登录 / 评论 / 观看历史） |
-| `DownloadService.ets` | 下载任务队列：并发控制、暂停 / 继续 / 删除、任务持久化恢复 |
+| `DownloadService.ets` | 章节任务队列：单引擎后台下载、暂停 / 继续 / 删除、任务持久化恢复、委托 ComicLibrary 落盘 |
+
+### storage/ — 持久化层
+
+| 文件 | 职责 |
+|------|------|
+| `AppDatabase.ets` | RDB 建库与 DDL（album / chapter / feed / pref / page_cache / read_state / account 等表） |
+| `AlbumDao.ets` | 漫画实体与章节目录的读写 |
+| `FeedDao.ets` | 列表顺序（首页 / 分类 / 搜索 / 收藏） |
+| `ProgressDao.ets` | 阅读进度与已读标记 |
+| `PageCacheDao.ets` | 分页响应快照（带 TTL） |
+| `SettingDao.ets` | 开关、偏好等键值项 |
+| `AccountDao.ets` | 已保存账号 |
 
 ### common/ — 工具与组件层
 
@@ -205,25 +252,27 @@ JMComic/
 | `Constants.ets` | 域名列表、图片 URL 模板、APP 密钥、分类 / 排序映射、HTTP Headers |
 | `CryptoUtils.ets` | MD5 Token 计算、AES-256-ECB 响应解密（对应 Python JmCryptoTool） |
 | `ImageDecodeUtils.ets` | scramble 分割数计算与图片还原解码（对应 Python JmImageTool） |
-| `DecodedImageCache.ets` | 已解码图片磁盘 PNG 缓存（cacheDir/decoded/{photoId}/{index}.png） |
-| `DownloadManager.ets` | 整本漫画下载：多章节顺序下载、取消、通知栏进度发布 |
-| `CacheManager.ets` | Preferences 缓存：分类列表（TTL 30 分钟）、搜索历史、阅读进度、下载任务 |
+| `ComicLibrary.ets` | 统一图片仓库：PNG 落盘、meta.json 提交标记、原子替换、按天清理 |
+| `CacheManager.ets` | RDB 门面：分页快照 TTL、偏好设置、阅读进度、搜索历史 |
+| `AccountManager.ets` | 多账号、会话快照、自动登录开关 |
+| `DownloadNotifier.ets` | 下载进度通知（按最小间隔节流） |
+| `ZipExporter.ets` | 专辑 ZIP 打包与系统保存对话框导出 |
+| `NavHelper.ets` | Navigation 跳转辅助（navPush / navReplace / navPop） |
+| `RouteParams.ets` | 各页面路由参数的具名接口 |
+| `ThemeManager.ets` / `ThemeSetting.ets` | 主题切换（跟随系统 / 浅色 / 深色）与设置项组件 |
+| `UpdateManager.ets` | 读取本机版本、拉取 GitHub Release、比较版本 |
 | `CommentItem.ets` | 评论项组件 |
-| `MenuPopup.ets` | 菜单 / 路由（线路）选择弹窗 |
 
 ### models/ — 数据模型
 
-`Album.ets` 定义了全部接口数据模型与 JSON 序列化结构：
+按「服务器契约 → 实体 → 列表顺序」分层，全部为纯类型 + 纯函数，不 import 数据库与文件系统：
 
-| 模型 | 说明 |
+| 文件 | 职责 |
 |------|------|
-| `JmAlbumInfo` / `JmAlbumDetail` | 漫画列表项 / 完整详情（章节、标签、作者） |
-| `JmPhotoInfo` / `JmImageInfo` | 章节信息 / 单张图片（含 download_url） |
-| `PictureData` / `JmPictureResp` | 章节图片响应（含 scramble_id） |
-| `DownloadTask` | 下载任务（状态机：排队 / 下载中 / 暂停 / 完成 / 错误） |
-| `UserSession` / `JmUserData` | 登录会话 |
-| `CommentInfo` / `CommentPageData` | 评论数据 |
-| `FavoriteAlbumItem` / `FavoriteFolderItem` | 收藏夹数据 |
+| `dto/ApiDto.ets` | 服务器契约：`JmAlbumInfo` / `JmAlbumDetail` / `JmPhotoInfo` / `JmImageInfo` / `PictureData` / `JmPictureResp` / `CommentPageData` / 收藏夹 / 分页响应 |
+| `ComicAlbum.ets` | 漫画实体 `ComicAlbum`、章节 `ComicChapter`、评论 `CommentInfo`，以及 DTO → 实体的纯转换函数 |
+| `AlbumFeed.ets` | 列表顺序 `Feed` / `FeedSection`，只存 id 序与标题，不存漫画内容 |
+| `Album.ets` | 运行时模型：`DownloadTask`（排队 / 下载中 / 暂停 / 完成 / 错误）、`UserSession`、`AlbumViewModel`（列表卡片展示字段） |
 
 ---
 
@@ -281,34 +330,39 @@ decodeImage(pixelMap, num) → 还原后的 PixelMap
 针对大图集（数百张）的阅读体验做了深度优化：
 
 ```
-Scroll (ScrollDirection.FREE + 缩放)      ← 整本缩放（0.5x~3.0x）
-  └── List (LazyForEach + cachedCount(10))  ← 懒加载 + 缓存项减少白屏
-        └── ListItem → Image
+竖向模式：Scroll (ScrollDirection.FREE + 缩放 0.5x~3.0x)
+  └── List (LazyForEach + cachedCount(10))     ← 懒加载 + 屏外缓存项减少白屏
+横向模式：Swiper (LazyForEach + cachedCount(2)) ← 左→右 / 右→左，进入即定位上次页码
 ```
 
 - **预加载**：`onAppear` 触发 `preloadNearbyPixelMaps(centerIndex)`，预加载当前项 ±10 范围
-- **磁盘缓存**：解码结果写 PNG 到 `cacheDir/decoded/{photoId}/{index}.png`，滑出视口释放内存、滑回秒加载
-- **进度追踪**：`onVisibleAreaChange([0.5])` 记录当前页；章节阅读进度写入 Preferences
+- **磁盘缓存**：解码结果 PNG 落 ComicLibrary（`filesDir/JMComic/albums/{albumId}/chapters/{章节}_{photoId}/`），滑出视口释放内存、滑回读盘秒加载
+- **进度追踪**：`onVisibleAreaChange([0.5])` 记录当前页；页码 / 最后章节 / 已读标记写入 RDB（`read_state`）
+- **滑杆跳页**：底栏滑杆直接定位任意页，页码与模式按钮双向同步
 - **节流刷新**：每解码 5 张才刷新一次 UI，降低负载
-- **章节切换**：`scrollEdge(Edge.Top)` 复位滚动 + 重置缩放
+- **章节切换**：复位滚动 + 重置缩放
 
-### 5. 缓存体系（`CacheManager.ets` + `DecodedImageCache.ets`）
+### 5. 本地数据与缓存（`storage/` + `CacheManager.ets` + `ComicLibrary.ets`）
 
-| 缓存 | 存储 | 内容 | 过期策略 |
-|------|------|------|----------|
-| 分类列表 | Preferences | category+order 分 key 缓存 | TTL 30 分钟 |
-| 搜索结果 | Preferences | 关键词缓存 | TTL 30 分钟 |
-| 收藏列表 | Preferences | folderId 分 key 缓存 | TTL 10 分钟 |
-| 搜索历史 | Preferences | 关键词（无数量限制） | 永久 |
-| 阅读进度 | Preferences | albumId-chapterId 键 | 永久 |
-| 下载任务 | Preferences | 任务队列序列化 | 永久 |
-| 解码图片 | 磁盘 cacheDir/decoded | 解码后 PNG | 随缓存清理 |
+| 数据 | 存储 | 内容 | 过期 / 清理 |
+|------|------|------|-------------|
+| 漫画实体 | RDB `album` / `chapter` | 标题、作者、标签、章节目录 | 随刷新更新 |
+| 列表顺序 | RDB `feed` / `feed_section` / `feed_item` | id 序与分区标题 | 超过刷新间隔联网更新 |
+| 分页快照 | RDB `page_cache` | 分类 / 搜索 / 收藏分页响应 | 带 TTL；列表新鲜度由设置页刷新间隔控制（默认 60 分钟） |
+| 阅读进度 | RDB `read_state` | 页码、最后章节、已读标记 | 永久，可在设置清除页码 |
+| 账号与偏好 | RDB `account` / `pref` | 多账号、自动登录、主题等 | 永久 |
+| 章节图片 | 文件仓库 ComicLibrary | 解码 PNG + `meta.json` | 阅读缓存 / 已导出内容按天清理 |
+| 原始图 | `cacheDir/JMComic/originals` | 服务器原图（解码原料） | 清理缓存即删，缺了下次重下 |
 
-### 6. 下载体系（`DownloadService.ets` + `DownloadManager.ets`）
+页面读取一律「本地优先」：本地有数据先渲染，超过刷新间隔才联网；网络响应只写表，页面写完再读一次。
 
-- `DownloadService`：任务队列，单并发顺序下载，支持暂停 / 继续 / 删除，任务持久化恢复（非终态恢复为暂停）
-- `DownloadManager`：整本漫画下载，两遍流程（先统计总图片数 → 再逐章逐图下载），支持取消（HTTP `destroy()`）
-- 通知栏：`downloadTemplate` 展示当前图片数 / 总数与百分比
+### 6. 下载与导出体系（`DownloadService.ets` + `ComicLibrary.ets` + `ZipExporter.ets`）
+
+- `DownloadService`：章节级任务队列，单引擎单并发顺序下载，支持暂停 / 继续 / 删除；任务持久化，重启后非终态恢复为「已暂停」，已下载图片按序号断点续传
+- 图片管线：优先复用阅读器已解码的 PNG → 缺失才下载原图 → scramble 解码 → 重编码 PNG 落盘 → 写 `meta.json`
+- 落盘统一由 ComicLibrary 负责，下载器只维护任务清单与「已下载」标记
+- 通知栏：`DownloadNotifier` 按最小间隔节流发布进度，专辑完成时提醒
+- 导出：`ZipExporter` 用 `zlib.compressFile` 打包专辑目录（保留「章节 / 序号」层级），经 `DocumentViewPicker.save` 由用户选择位置，临时包放 `cacheDir/zip_export` 并在导出后清理
 
 ---
 
@@ -317,16 +371,20 @@ Scroll (ScrollDirection.FREE + 缩放)      ← 整本缩放（0.5x~3.0x）
 ### 数据请求链路
 
 ```text
-用户操作 → UI (Page)
-           ↓ 业务调用
-          ApiService
-           ├── CryptoUtils 生成 Token 签名头
-           ├── DomainManager 选择最佳 API 域名
-           └── HttpClient 发起请求（携带 Cookie）
-                ↓ 响应
-           CryptoUtils AES 解密 data
+用户操作 → UI (Page / NavDestination)
+           ↓ 先读本地
+          DAO / CacheManager（RDB）
+           ├── 数据新鲜 → 直接渲染
+           └── 过期 / 缺失 → ApiService
+                              ├── CryptoUtils 生成 Token 签名头
+                              ├── DomainManager 选择最佳 API 域名
+                              └── HttpClient 发起请求（携带 Cookie）
+                                   ↓ 响应
+                              CryptoUtils AES 解密 data
+                                   ↓
+                              写表（AlbumDao / FeedDao / PageCacheDao）
            ↓
-          UI 渲染 (@State / ForEach)
+          UI 重新读表渲染 (@State / ForEach)
 ```
 
 ### 图片解码链路
@@ -334,24 +392,29 @@ Scroll (ScrollDirection.FREE + 缩放)      ← 整本缩放（0.5x~3.0x）
 ```text
 ImageViewerPage 滚动到可视区
     ↓ onAppear / 预加载
-getChapterPictures(photoId, scrambleId)
-    ↓
-ImageDecodeUtils 计算分割数 + 下载原图
-    ↓ TaskPool @Concurrent 并行解码
-DecodedImageCache.saveDecodedImage (写 PNG)
+ComicLibrary.ensureImage(ctx, index)
+    ├── 仓库已有 PNG → 直接读
+    └── 缺失 → 下载原图（cacheDir/JMComic/originals）
+              ↓ TaskPool @Concurrent 并行解码
+           scramble 还原 → 重编码 PNG → 原子写入章节目录
+    ↓ 整章对齐完成
+ComicLibrary.commitChapter → 写 meta.json（提交标记）
     ↓ 滑入视口
 从磁盘 PNG 创建 PixelMap → Image 显示
     ↓ 滑出视口
-释放 PixelMap（内存回收），磁盘缓存兜底
+释放 PixelMap（内存回收），磁盘文件兜底
 ```
 
 ### 关键设计
 
 - **域名故障转移**：请求失败自动切换域名重试，后台定期复探恢复，保证线路可用性
 - **Cookie 会话**：HttpClient 全局管理 Cookie，重要 Cookie（AVS、ipcountry 等）优先，模拟 Session
-- **图片三级缓存**：内存 PixelMap → 磁盘 PNG → 网络下载，滚动阅读不闪烁
-- **阅读进度**：仅本地保存（Preferences），返回详情页时刷新「看过」状态
-- **去重机制**：分页数据使用 Map 按 ID 去重合并，避免 ForEach key 冲突
+- **图片三级缓存**：内存 PixelMap → 仓库 PNG → 网络下载，滚动阅读不闪烁
+- **单份图片**：阅读、下载、导出共用 ComicLibrary 里的同一份 PNG，不重复占空间
+- **原子替换**：先写 `.tmp` 再改名，换版时逐页替换，任何时刻读到都是完整文件
+- **本地优先**：页面先读 RDB 渲染，超时才联网；写库与读库分离，避免 UI 持有网络对象
+- **阅读进度**：存 RDB，返回详情页时刷新「看过」状态；设置页可一键清除页码
+- **去重机制**：分页数据按 ID 去重合并，列表顺序单独存 `feed_item`，避免 ForEach key 冲突
 
 ---
 
@@ -366,7 +429,7 @@ ohos.permission.INTERNET   网络访问（请求 API 与图片 CDN）
 ## 构建配置
 
 ```
-SDK 版本:    target 6.1.1(24) | compatible 6.1.0(23)
+SDK 版本:    target 26.0.0 | compatible 6.1.1(24)
 编译工具:    Hvigor + BiSheng 编译器
 模块:        entry（HAP）+ common（HAR）
 设备类型:    phone, tablet, 2in1, car, wearable, tv
@@ -428,10 +491,10 @@ hdc install entry/build/default/outputs/default/entry-default-signed.hap
 
 ### 新增页面步骤
 
-1. 在 `entry/src/main/ets/pages/` 下创建 `.ets` 文件，添加 `@Entry` 装饰器
-2. 在 `entry/src/main/resources/base/profile/main_pages.json` 中注册路由
-3. 通过 `router.pushUrl({ url: 'pages/XXX' })` 跳转
-4. 如需网络数据，调用 `ApiService.getInstance()` 对应方法
+1. 在 `entry/src/main/ets/pages/` 下创建 `.ets` 文件，实现 `NavDestination` 并导出 `@Builder` 构建函数（`Index` 是唯一 `@Entry`，`main_pages.json` 只登记它）
+2. 在 `entry/src/main/resources/base/profile/router_map.json` 中注册 `name` / `pageSourceFile` / `buildFunction`
+3. 跳转统一用 `common/NavHelper` 的 `navPush` / `navReplace` / `navPop`，路由参数接口写在 `common/RouteParams.ets`
+4. 取参放在 `onReady`（`aboutToAppear` 时路由参数尚未就绪）；网络数据走 `ApiService`，先落库再读表渲染
 
 ### 新增第三方库
 
