@@ -21,6 +21,7 @@ import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { CommentItemComponent } from '../common/CommentItem';
 import { DeviceUtils } from 'common';
 import { AccountManager } from '../common/AccountManager';
+import { ComicLibrary, CleanupRule } from '../common/ComicLibrary';
 import { JmAlbumCard } from './JmAlbumCard';
 import { navPush } from '../common/NavHelper';
 import { AlbumDetailParams, SectionMoreParams } from '../common/RouteParams';
@@ -1808,6 +1809,31 @@ struct Index {
       }
     } catch (err) {
       console.warn('[Index] 自动登录失败:', JSON.stringify(err));
+    }
+    // 后台按用户设置清理图片仓库中的过期章节（不阻塞首屏）
+    this.autoCleanupLibrary();
+  }
+
+  /** 冷启动后台清理：阅读缓存按设置天数、已导出内容按设置天数，手动下载未导出内容不动 */
+  private async autoCleanupLibrary(): Promise<void> {
+    try {
+      let cache = await CacheManager.getInstance();
+      let readDays = cache.getReadCacheDays();
+      let exportedDays = cache.getExportedDays();
+      if (readDays === 0 && exportedDays === 0) {
+        return;
+      }
+      let lib = await ComicLibrary.getInstance();
+      let rule: CleanupRule = {
+        readCacheDays: readDays,
+        exportedDays: exportedDays,
+      } as CleanupRule;
+      let result = await lib.cleanup(rule);
+      if (result.removedChapters > 0) {
+        console.info(`[Index] auto cleanup removed ${result.removedChapters} chapters`);
+      }
+    } catch (err) {
+      console.warn('[Index] auto cleanup error:', JSON.stringify(err));
     }
   }
 

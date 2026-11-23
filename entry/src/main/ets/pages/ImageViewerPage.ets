@@ -3,7 +3,7 @@ import { http } from '@kit.NetworkKit';
 import { ApiService } from '../network/ApiService';
 import { CacheManager } from '../common/CacheManager';
 import { ImageDecodeUtils } from '../common/ImageDecodeUtils';
-import { DecodedImageCache } from '../common/DecodedImageCache';
+import { ComicLibrary, LibraryContext } from '../common/ComicLibrary';
 import { APP_HEADERS_IMAGE } from '../common/Constants';
 import { JmImageInfo, PictureData } from '../models/Album';
 import { navPop } from '../common/NavHelper';
@@ -69,11 +69,14 @@ struct ImageViewerPage {
   private scrambleId: number = 0;
   private albumId: number = 0;
   private albumName: string = '';
+  private photoName: string = '';
   private chapters: ChapterInfo[] = [];
   private currentChapterIndex: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private cache: CacheManager | null = null;
-  private decodedCache: DecodedImageCache | null = null;
+  private library: ComicLibrary | null = null;
+  // 当前章节上下文（阅读/下载/导出共用的图片仓库路径依据）
+  private libraryCtx: LibraryContext | null = null;
   private totalImages: number = 0;
   private scrollScroller: Scroller = new Scroller();
   private listScroller: Scroller = new Scroller();
@@ -107,7 +110,8 @@ struct ImageViewerPage {
       this.scrambleId = params.scrambleId;
       this.albumId = params.albumId;
       this.albumName = params.albumName || '';
-      this.titleText = params.photoName || '';
+      this.photoName = params.photoName || '';
+      this.titleText = this.photoName;
       this.currentChapterIndex = params.currentChapterIndex ?? 0;
       if (params.chaptersStr) {
         try {
@@ -132,7 +136,7 @@ struct ImageViewerPage {
       this.readerMode = mode;
       this.isPagedMode = (mode !== 'scroll');
       this.isRtl = (mode === 'paged_rtl');
-      this.decodedCache = await DecodedImageCache.getInstance();
+      this.library = await ComicLibrary.getInstance();
 
       let cached = this.cache!.loadChapterData(this.photoId);
       let data: PictureData | null = null;
@@ -164,6 +168,20 @@ struct ImageViewerPage {
         if (data.pictures.scramble_id) {
           this.scrambleId = data.pictures.scramble_id;
         }
+        // 构造统一仓库上下文：阅读/下载/导出共用同一份路径与指纹
+        let imgNames: string[] = [];
+        for (let img of this.images) {
+          imgNames.push(img.img_name);
+        }
+        this.libraryCtx = {
+          albumId: this.albumId,
+          albumName: this.albumName,
+          photoId: this.photoId,
+          chapterName: this.photoName || data.pictures.name || '',
+          scrambleId: this.scrambleId,
+          fingerprint: ComicLibrary.chapterFingerprint(this.scrambleId, imgNames),
+          imgNames: imgNames,
+        } as LibraryContext;
         // 初始化 PixelMap 数组
         let arr: (image.PixelMap | null)[] = [];
         for (let i = 0; i < this.totalImages; i++) {
@@ -461,7 +479,10 @@ struct ImageViewerPage {
     this.swiperToggle = !this.swiperToggle;
     this.preloadActive = false;
     this.photoId = chapter.photoId;
-    this.titleText = chapter.photoName || '';
+    // 新章节数据尚未加载完成前清空上下文，避免命中上一章的仓库目录
+    this.libraryCtx = null;
+    this.photoName = chapter.photoName || '';
+    this.titleText = this.photoName;
     this.currentChapterIndex = index;
     this.currentVisibleIndex = 0;
     this.images = [];
@@ -494,7 +515,7 @@ struct ImageViewerPage {
       let idx = this.preloadIndex;
       this.preloadIndex++;
       // 已有磁盘缓存则跳过
-      if (this.decodedCache && this.decodedCache.hasCached(this.photoId, idx)) {
+      if (this.library && this.libraryCtx && this.library.hasImage(this.libraryCtx, idx)) {
         continue;
       }
       this.preloadInFlight++;
@@ -512,7 +533,7 @@ struct ImageViewerPage {
     let gen = this.chapterGeneration;
     try {
       // 再次检查磁盘缓存（可能其他任务已写入）
-      if (this.decodedCache && this.decodedCache.hasCached(this.photoId, index)) {
+      if (this.library && this.libraryCtx && this.library.hasImage(this.libraryCtx, index)) {
         return;
       }
 
@@ -558,9 +579,9 @@ struct ImageViewerPage {
       }
       if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
 
-      // 4. 写 PNG 到磁盘
-      if (this.decodedCache) {
-        await this.decodedCache.saveDecodedImage(this.photoId, index, pixelMap);
+      // 4. 写入统一仓库（阅读/下载/导出共用这一份 PNG）
+      if (this.library && this.libraryCtx) {
+        await this.library.saveImage(this.libraryCtx, index, pixelMap);
       }
 
       // 5. 释放内存（磁盘已有备份）
@@ -588,8 +609,8 @@ struct ImageViewerPage {
 
     try {
       // 从磁盘 PNG 加载（毫秒级）
-      if (this.decodedCache && this.decodedCache.hasCached(this.photoId, index)) {
-        let pm = await this.decodedCache.loadDecodedImage(this.photoId, index);
+      if (this.library && this.libraryCtx && this.library.hasImage(this.libraryCtx, index)) {
+        let pm = this.library ? await this.library.loadPixelMap(this.libraryCtx!, index) : null;
         if (gen !== this.chapterGeneration) {
           if (pm) pm.release();
           return;
@@ -648,9 +669,9 @@ struct ImageViewerPage {
     }
     if (gen !== this.chapterGeneration) { pixelMap.release(); return; }
 
-    // 写入磁盘缓存 + 显示
-    if (this.decodedCache) {
-      this.decodedCache.saveDecodedImage(this.photoId, index, pixelMap);
+    // 写入统一仓库 + 显示（pixelMap 随后要显示，不能 release，但必须等写入完成再交给 UI）
+    if (this.library && this.libraryCtx) {
+      await this.library.saveImage(this.libraryCtx, index, pixelMap);
     }
     this.decodedPixelMaps.splice(index, 1, pixelMap);
   }

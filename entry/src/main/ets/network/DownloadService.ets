@@ -1,9 +1,5 @@
-import { fileIo } from '@kit.CoreFileKit';
-import { image } from '@kit.ImageKit';
-import { common } from '@kit.AbilityKit';
 import { UIContext } from '@kit.ArkUI';
 import { ApiService } from './ApiService';
-import { HttpClient } from './HttpClient';
 import {
   DownloadTask,
   DownloadStatus,
@@ -11,10 +7,8 @@ import {
   IDownloadTaskJSON,
   PictureData,
 } from '../models/Album';
-import { APP_HEADERS_IMAGE } from '../common/Constants';
 import { CacheManager } from '../common/CacheManager';
-import { DecodedImageCache } from '../common/DecodedImageCache';
-import { ImageDecodeUtils } from '../common/ImageDecodeUtils';
+import { ComicLibrary, LibraryContext } from '../common/ComicLibrary';
 import { DownloadNotifier } from '../common/DownloadNotifier';
 
 /** 加入下载队列的章节描述（详情页构建） */
@@ -33,8 +27,8 @@ export interface ChapterDownloadInfo {
  * 图片管线：优先复用阅读器已解码缓存 → 网络拉取原图 → scramble 解码还原 →
  * 重编码 PNG 落盘 → 回写解码缓存。
  *
- * 落盘结构：filesDir/JMComic/download/{专辑名}_{专辑ID}/{章节名}/{序号}.png
- * （目录名已做非法字符清洗；同专辑章节重名时追加章节 ID 防互写）
+ * 图片落盘由 ComicLibrary 统一管理：filesDir/JMComic/library/{专辑}_{ID}/{章节}_{photoId}/{序号}.png
+ * 下载器只登记任务清单并标记「已下载」，不再自己复制或落盘图片。
  *
  * 专辑全部章节完成时经 DownloadNotifier 发布通知并 toast 提醒；
  * 导出 zip 由下载管理页手动触发（见 common/ZipExporter）。
@@ -48,8 +42,7 @@ export class DownloadService {
   /** 回调：任务状态变化时通知 UI（下载管理页） */
   onTaskUpdated: (() => void) | null = null;
   private cache: CacheManager | null = null;
-  private baseDir: string = '';
-  private decodedCache: DecodedImageCache | null = null;
+  private library: ComicLibrary | null = null;
 
   private constructor() {
   }
@@ -71,9 +64,7 @@ export class DownloadService {
   }
 
   private async init(): Promise<void> {
-    let context = getContext() as common.UIAbilityContext;
-    this.baseDir = `${context.filesDir}/JMComic/download`;
-    this.decodedCache = await DecodedImageCache.getInstance();
+    this.library = await ComicLibrary.getInstance();
     await this.initCache();
   }
 
@@ -161,27 +152,13 @@ export class DownloadService {
       this.notifyUpdate();
       this.processQueue();
     }
-    // 连带删除本地已下载文件（rmdirSync 支持递归删除非空目录）
-    let dir = this.getAlbumDir(albumId, albumName);
-    try {
-      if (fileIo.accessSync(dir)) {
-        fileIo.rmdirSync(dir);
-      }
-    } catch (e) {
-      console.warn(`[DownloadService] remove album dir failed: ${JSON.stringify(e)}`);
-    }
+    // 连带删除统一仓库中该专辑的图片与清单
+    this.library?.removeAlbum(albumId, albumName);
   }
 
-  /** 仅删除整本漫画的本地已下载文件，保留任务记录（「导出成功后自动删除下载缓存」设置开启时由导出流程调用） */
+  /** 仅删除整本漫画的仓库图片，保留任务记录（「导出成功后自动删除下载缓存」设置开启时由导出流程调用） */
   deleteAlbumFiles(albumId: number, albumName: string): void {
-    let dir = this.getAlbumDir(albumId, albumName);
-    try {
-      if (fileIo.accessSync(dir)) {
-        fileIo.rmdirSync(dir);
-      }
-    } catch (e) {
-      console.warn(`[DownloadService] remove album files failed: ${JSON.stringify(e)}`);
-    }
+    this.library?.removeAlbum(albumId, albumName);
   }
 
   /** 暂停任务（当前正在下载的图片完成后停下，进度已持久化） */
@@ -265,6 +242,20 @@ export class DownloadService {
     let pictureData: PictureData = await apiService.getChapterPictures(task.photoId, task.scrambleId);
     let images: JmImageInfo[] = pictureData.pictures.images;
     let scrambleId: number = pictureData.pictures.scramble_id || task.scrambleId;
+    // 与阅读器用同一份元数据构造上下文，命中同一份仓库文件
+    let imgNames: string[] = [];
+    for (let img of images) {
+      imgNames.push(img.img_name);
+    }
+    let ctx: LibraryContext = {
+      albumId: task.albumId,
+      albumName: task.albumName,
+      photoId: task.photoId,
+      chapterName: task.chapterName,
+      scrambleId: scrambleId,
+      fingerprint: ComicLibrary.chapterFingerprint(scrambleId, imgNames),
+      imgNames: imgNames,
+    } as LibraryContext;
     task.totalImages = images.length;
     // 章节内容与本地进度不符（服务端改版）时重置进度
     if (task.completedImages > images.length) {
@@ -272,11 +263,7 @@ export class DownloadService {
     }
     this.notifyUpdate();
 
-    // 2. 准备目录
-    let dirPath = this.getChapterDir(task);
-    this.ensureDir(dirPath);
-
-    // 3. 逐张下载（scramble 解码后 PNG 落盘，序号即阅读顺序）
+    // 2. 逐张确保图片在统一仓库中（命中阅读缓存/已下载内容时零网络、零复制）
     for (let i = 0; i < images.length; i++) {
       if ((task.status as string) === (DownloadStatus.PAUSED as string)) {
         break;
@@ -286,10 +273,9 @@ export class DownloadService {
       task.currentImageName = img.img_name;
       this.notifyUpdate();
 
-      let destPath = `${dirPath}/${i + 1}.png`;
       try {
-        if (fileIo.accessSync(destPath)) {
-          // 断点续传：目标文件已存在，直接计入完成
+        // 断点续传：仓库中已有该文件则直接计入完成
+        if (this.library && this.library.hasImage(ctx, i)) {
           if (task.completedImages < i + 1) {
             task.completedImages = i + 1;
             this.notifyUpdate();
@@ -297,7 +283,7 @@ export class DownloadService {
           continue;
         }
 
-        await this.downloadImage(task.photoId, i, scrambleId, img, destPath);
+        await this.downloadImage(ctx, i, img);
         task.completedImages = i + 1;
         this.notifyUpdate();
         DownloadNotifier.notifyProgress(task.albumId, task.albumName, task.chapterName,
@@ -306,6 +292,11 @@ export class DownloadService {
         console.error(`[DownloadService] image failed: ${img.img_name}, ${(err as Error).message}`);
         // 单张失败不中断整体，继续下一张
       }
+    }
+
+    // 全部完成后登记为手动下载：永不自动清理
+    if (task.completedImages === task.totalImages && this.library) {
+      this.library.markDownloaded(ctx);
     }
 
     // 缺页校验：仍有未落盘的图片时标记失败（用户点「继续」可断点补齐），避免静默产出空包/缺页包
@@ -318,94 +309,21 @@ export class DownloadService {
   /**
    * 下载单张图片：优先复制已解码缓存 → 网络拉取 → scramble 解码 → PNG 落盘 → 回写缓存
    */
-  private async downloadImage(
-    photoId: string, index: number,
-    scrambleId: number, img: JmImageInfo,
-    destPath: string
-  ): Promise<void> {
-    // 1. 优先从阅读器已解码缓存复制（免网络请求；浏览过/预加载过的页面瞬间完成即来源于此）
-    if (this.decodedCache && this.decodedCache.hasCached(photoId, index)) {
-      let cachePath = this.decodedCache.getCacheFilePath(photoId, index);
-      try {
-        fileIo.copyFileSync(cachePath, destPath);
-        console.info(`[DownloadService] copied from decoded cache: ${photoId}/${index}`);
-        return;
-      } catch (e) {
-        console.warn(`[DownloadService] copy from decoded cache failed: ${photoId}/${index}`);
-      }
+  /**
+   * 下载单张图片：只委托统一仓库。
+   * 仓库内部完成「查本地 → 旧缓存迁移 → 网络拉取 → scramble 还原 → PNG 落盘 → 记录清单」，
+   * 同一图片与阅读/导出共用唯一物理副本，且并发请求自动合并。
+   */
+  private async downloadImage(ctx: LibraryContext, index: number, img: JmImageInfo): Promise<void> {
+    if (!this.library) {
+      throw new Error('图片仓库未初始化');
     }
-
-    // 2. 网络下载原始图（失败等待后重试一次）
-    let url = img.img_url || img.download_url;
-    if (!url || url.length === 0) {
-      throw new Error(`图片地址为空: ${img.img_name}`);
-    }
-    let data: ArrayBuffer;
-    try {
-      data = await HttpClient.downloadBinary(url, APP_HEADERS_IMAGE);
-    } catch (err) {
-      await HttpClient.sleep(1500);
-      data = await HttpClient.downloadBinary(url, APP_HEADERS_IMAGE);
-    }
-
-    // 3. 解码为 PixelMap 并做 scramble 还原
-    let imageSource = image.createImageSource(data);
-    let pixelMap = await imageSource.createPixelMap({
-      desiredPixelFormat: image.PixelMapFormat.RGBA_8888,
-    });
-    imageSource.release();
-
-    let imgNameNoExt = img.img_name.replace(/\.[^.]+$/, '');
-    let num = await ImageDecodeUtils.getSegmentationNum(
-      scrambleId,
-      parseInt(photoId),
-      imgNameNoExt
-    );
-    if (num > 0) {
-      pixelMap = await ImageDecodeUtils.decodeImage(pixelMap, num);
-    }
-
-    // 4. PNG 落盘并回写解码缓存（后续阅读/重复下载免网络）
-    await this.savePixelMapToFile(pixelMap, destPath);
-    if (this.decodedCache) {
-      this.decodedCache.saveDecodedImage(photoId, index, pixelMap);
-    }
-    pixelMap.release();
+    await this.library.ensureImage(ctx, index, img);
   }
 
-  /** 将 PixelMap 编码为 PNG 写入文件 */
-  private async savePixelMapToFile(pixelMap: image.PixelMap, filePath: string): Promise<void> {
-    let packer = image.createImagePacker();
-    let packOpts: image.PackingOption = {
-      format: 'image/png',
-      quality: 100
-    };
-    let data = await packer.packing(pixelMap, packOpts);
-    packer.release();
-    let file = fileIo.openSync(filePath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
-    fileIo.writeSync(file.fd, data);
-    fileIo.closeSync(file);
-  }
-
-  /** 专辑下载根目录：{baseDir}/{专辑名}_{专辑ID}（ZipExporter 同步使用，勿改格式） */
+  /** 专辑根目录（兼容旧调用：实际目录由统一仓库管理） */
   getAlbumDir(albumId: number, albumName: string): string {
-    return `${this.baseDir}/${DownloadService.sanitizeFileName(albumName)}_${albumId}`;
-  }
-
-  /** 章节目录：同专辑内章节重名时追加 photoId，避免目录互写覆盖 */
-  private getChapterDir(task: DownloadTask): string {
-    let safeName = DownloadService.sanitizeFileName(task.chapterName || `第${task.photoId}话`);
-    let duplicate = false;
-    this.tasks.forEach((other: DownloadTask) => {
-      if (other.albumId === task.albumId && other.photoId !== task.photoId
-        && other.chapterName === task.chapterName) {
-        duplicate = true;
-      }
-    });
-    if (duplicate) {
-      safeName = `${safeName}_${task.photoId}`;
-    }
-    return `${this.getAlbumDir(task.albumId, task.albumName)}/${safeName}`;
+    return ComicLibrary.albumDir(albumId, albumName);
   }
 
   /** 专辑章节任务是否已全部完成（至少有一个任务才算） */
@@ -464,12 +382,6 @@ export class DownloadService {
       if (task.status === DownloadStatus.QUEUED) return task;
     }
     return null;
-  }
-
-  private ensureDir(dirPath: string): void {
-    if (!fileIo.accessSync(dirPath)) {
-      fileIo.mkdirSync(dirPath, true);
-    }
   }
 
   /** 清理文件名中的非法字符（目录/文件名统一入口） */

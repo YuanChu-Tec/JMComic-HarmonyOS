@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { zlib } from '@kit.BasicServicesKit';
 import { DownloadService } from '../network/DownloadService';
+import { ComicLibrary } from './ComicLibrary';
 
 /** 批量导出的专辑引用（下载管理页构建） */
 export interface AlbumExportRef {
@@ -12,8 +13,8 @@ export interface AlbumExportRef {
 /**
  * 下载内容 zip 导出器
  *
- * 将专辑下载目录（filesDir/JMComic/download/{专辑名}_{专辑ID}）用 zlib.compressFile
- * 整目录打包（zip 内保留「章节/序号」层级），再经 DocumentViewPicker.save 由用户
+ * 将统一图片仓库中的专辑目录（filesDir/JMComic/library/{专辑名}_{专辑ID}）用
+ * zlib.compressFile 整目录打包（zip 内保留「章节/序号」层级），再经 DocumentViewPicker.save 由用户
  * 选择保存位置——系统文件保存对话框无需申请任何存储权限。
  *
  * 支持单专辑导出与多专辑批量导出（一次保存对话框返回多个 URI，逐个复制落盘）。
@@ -35,6 +36,14 @@ export class ZipExporter {
         return null;
       }
       ZipExporter.copyToUri(zipPath, uris[0]);
+      // 记录导出时间：已下载内容进入「可延迟清理」层，不再永不清理
+      let library = await ComicLibrary.getInstance();
+      let manifests = library.getAllManifests();
+      for (let m of manifests) {
+        if (m.albumId === albumId) {
+          library.markExported(m.photoId);
+        }
+      }
       return `压缩包已保存：${safeName}.zip`;
     } finally {
       ZipExporter.cleanupZip(zipPath);
@@ -76,8 +85,16 @@ export class ZipExporter {
         return null;
       }
       let saved = 0;
+      let library = await ComicLibrary.getInstance();
+      let manifests = library.getAllManifests();
       for (let i = 0; i < uris.length && i < zipPaths.length; i++) {
         ZipExporter.copyToUri(zipPaths[i], uris[i]);
+        let albumId = albums[i].albumId;
+        for (let m of manifests) {
+          if (m.albumId === albumId) {
+            library.markExported(m.photoId);
+          }
+        }
         saved++;
       }
       return `已保存 ${saved} 个压缩包`;

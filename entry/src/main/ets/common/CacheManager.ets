@@ -14,6 +14,8 @@ import { Context } from '@kit.AbilityKit';
  */
 export class CacheManager {
   private static PREF_NAME = 'JMComicCache';
+  /** 所有记录过阅读位置的漫画 ID 列表（Preferences 不支持枚举 key，需自行维护索引） */
+  private static KEY_POS_ALBUMS = 'pos_albums';
   private static TTL_CATEGORY = 30 * 60 * 1000; // 30 分钟
   private static TTL_FAVORITE = 10 * 60 * 1000; // 10 分钟
   private static TTL_SEARCH_RESULT = 30 * 60 * 1000; // 30 分钟
@@ -225,13 +227,42 @@ export class CacheManager {
     return this.getString('pref_order', 'mr');
   }
 
+  // ─── 图片仓库自动清理策略 ───
+
+  /** 阅读缓存保留天数：0 表示不自动清理，默认 7 天 */
+  saveReadCacheDays(days: number): void {
+    this.put('pref_read_cache_days', `${days}`);
+  }
+
+  getReadCacheDays(): number {
+    return Number(this.getString('pref_read_cache_days', '7'));
+  }
+
+  /** 已导出内容保留天数：0 表示不自动清理，默认关闭 */
+  saveExportedDays(days: number): void {
+    this.put('pref_exported_days', `${days}`);
+  }
+
+  getExportedDays(): number {
+    return Number(this.getString('pref_exported_days', '0'));
+  }
+
   // ─── 章节图片数据缓存 ───
+
+  /** 章节元数据缓存有效期 24h；过期后重新拉取，避免长期使用旧图片列表/旧 scramble_id */
+  private static readonly CHAPTER_DATA_TTL_MS: number = 24 * 60 * 60 * 1000;
 
   saveChapterData(photoId: string, dataJson: string): void {
     this.put(`chapter_${photoId}`, dataJson);
+    this.put(`chapter_${photoId}_ts`, `${Date.now()}`);
   }
 
   loadChapterData(photoId: string): string | null {
+    let ts: number = Number(this.getString(`chapter_${photoId}_ts`, '0'));
+    // 旧版本写入的数据没有时间戳，或已过期，都视为未命中并重新请求
+    if (ts <= 0 || Date.now() - ts > CacheManager.CHAPTER_DATA_TTL_MS) {
+      return null;
+    }
     return this.getString(`chapter_${photoId}`) || null;
   }
 
@@ -314,8 +345,9 @@ export class CacheManager {
 
   markChapterRead(albumId: number, chapterId: string): void {
     this.put(`read_${albumId}_${chapterId}`, Date.now().toString());
-    // 同时更新最后阅读章节
-    this.put(`lastread_${albumId}`, chapterId);
+    // 同时更新最后阅读章节（v2：旧 lastread_ 前缀的记录直接作废）
+    this.put(`rlast_${albumId}`, chapterId);
+    this.trackPosAlbum(albumId);
   }
 
   isChapterRead(albumId: number, chapterId: string): boolean {
@@ -324,7 +356,7 @@ export class CacheManager {
   }
 
   getLastReadChapterId(albumId: number): string {
-    return this.getString(`lastread_${albumId}`);
+    return this.getString(`rlast_${albumId}`);
   }
 
   getChapterReadTime(albumId: number, chapterId: string): number {
@@ -340,30 +372,56 @@ export class CacheManager {
    */
   saveReadPosition(albumId: number, chapterId: string, pageIndex: number, total: number): void {
     let pos: ReadPosition = { index: pageIndex, total: total, tick: Date.now() };
-    this.putObject(`pos_${albumId}_${chapterId}`, pos);
+    this.putObject(`rpos_${albumId}_${chapterId}`, pos);
     // 维护该漫画已记录位置的章节列表，便于整体清空
-    let chapters = this.getObject<string[]>(`poslist_${albumId}`) || [];
+    let chapters = this.getObject<string[]>(`rplist_${albumId}`) || [];
     if (!chapters.includes(chapterId)) {
       chapters.push(chapterId);
-      this.putObject(`poslist_${albumId}`, chapters);
+      this.putObject(`rplist_${albumId}`, chapters);
     }
-    this.put(`lastread_${albumId}`, chapterId);
+    this.put(`rlast_${albumId}`, chapterId);
+    this.trackPosAlbum(albumId);
   }
 
   /** 读取某章节的阅读位置，无记录返回 -1 */
   getReadPosition(albumId: number, chapterId: string): number {
-    let pos = this.getObject<ReadPosition>(`pos_${albumId}_${chapterId}`);
+    let pos = this.getObject<ReadPosition>(`rpos_${albumId}_${chapterId}`);
     return pos && pos.index >= 0 ? pos.index : -1;
   }
 
-  /** 清空某本漫画的全部阅读位置 */
+  /** 清空某本漫画的全部阅读位置（新键前缀） */
   clearReadPositions(albumId: number): void {
-    let chapters = this.getObject<string[]>(`poslist_${albumId}`) || [];
+    let chapters = this.getObject<string[]>(`rplist_${albumId}`) || [];
     for (let cid of chapters) {
-      this.prefs?.deleteSync(`pos_${albumId}_${cid}`);
+      this.prefs?.deleteSync(`rpos_${albumId}_${cid}`);
     }
-    this.prefs?.deleteSync(`poslist_${albumId}`);
+    this.prefs?.deleteSync(`rplist_${albumId}`);
     this.prefs?.flushSync();
+  }
+
+  /** 把漫画 ID 记入索引，供「清除全部阅读位置」遍历（写多一次 preferences，量极小） */
+  private trackPosAlbum(albumId: number): void {
+    let albums = this.getObject<number[]>(CacheManager.KEY_POS_ALBUMS) || [];
+    if (!albums.includes(albumId)) {
+      albums.push(albumId);
+      this.putObject(CacheManager.KEY_POS_ALBUMS, albums);
+    }
+  }
+
+  /**
+   * 清空全部漫画的阅读位置（rpos_* / rplist_* / rlast_*）
+   * 已读章节标记 read_* 保留：章节仍显示"已读"，但不再自动跳到上次位置/章节。
+   * @returns 清除的漫画数量
+   */
+  clearAllReadPositions(): number {
+    let albums = this.getObject<number[]>(CacheManager.KEY_POS_ALBUMS) || [];
+    for (let albumId of albums) {
+      this.clearReadPositions(albumId);
+      this.prefs?.deleteSync(`rlast_${albumId}`);
+    }
+    this.prefs?.deleteSync(CacheManager.KEY_POS_ALBUMS);
+    this.prefs?.flushSync();
+    return albums.length;
   }
 }
 
