@@ -6,8 +6,8 @@ import { AppDatabase, TABLE_READ_STATE } from './AppDatabase';
  *
  * 一行 = (漫画, 章节)。字段含义：
  * - page_index / total：读到第几页，-1 表示没有页码记录（清位置只清这一项）
- * - tick：最后一次与这章交互的时间；取最大者即「最后阅读章节」，清位置时保留
- * - is_read / read_at：章节是否已读完、什么时候读的（清位置时保留）
+ * - tick：最后一次与这章交互的时间；取最大者即「最后阅读章节」（清位置时保留，清阅读记录时整行删除）
+ * - is_read / read_at：章节是否已读完、什么时候读的（清位置时保留，清阅读记录时整行删除）
  */
 export class ProgressDao {
   private static instance: ProgressDao | null = null;
@@ -117,8 +117,20 @@ export class ProgressDao {
   }
 
   /**
+   * 清除全部阅读记录：已读标记、最后阅读章节与阅读位置一并清掉（整表 DELETE）。
+   * 与 clearAllPositions 的分工：那个只清页码、保留已读与最后章节，这个全清。
+   * @returns 有阅读记录的漫画数
+   */
+  clearAllReadHistory(): number {
+    let count = this.countAlbumsWithHistory();
+    this.db.executeSync(`DELETE FROM ${TABLE_READ_STATE}`);
+    return count;
+  }
+
+  /**
    * 某本漫画各章最后一次交互时间（tick 与已读时间取大），供清理阅读缓存判断新旧。
-   * 清位置只清页码，tick / read_at 都保留，缓存新旧判定不受影响。
+   * 清位置只清页码，tick / read_at 都保留，缓存新旧判定不受影响；
+   * 清阅读记录会删掉整行，该漫画的缓存新旧判定退回目录写入时间。
    */
   lastActivityOfAlbum(albumId: number): Map<string, number> {
     let rs = this.db.querySqlSync(
@@ -142,6 +154,17 @@ export class ProgressDao {
   private countAlbumsWithPosition(): number {
     let rs = this.db.querySqlSync(
       `SELECT COUNT(DISTINCT album_id) AS n FROM ${TABLE_READ_STATE} WHERE page_index >= 0`);
+    try {
+      return rs.goToFirstRow() ? rs.getLong(rs.getColumnIndex('n')) : 0;
+    } finally {
+      rs.close();
+    }
+  }
+
+  /** 有阅读历史的漫画数（清历史之后行不再计入，所以按整表 distinct album 判） */
+  private countAlbumsWithHistory(): number {
+    let rs = this.db.querySqlSync(
+      `SELECT COUNT(DISTINCT album_id) AS n FROM ${TABLE_READ_STATE}`);
     try {
       return rs.goToFirstRow() ? rs.getLong(rs.getColumnIndex('n')) : 0;
     } finally {

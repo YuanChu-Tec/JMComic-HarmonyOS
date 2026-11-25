@@ -21,17 +21,24 @@ export class CacheManager {
   private static instance: CacheManager | null = null;
 
   /**
-   * 列表（feed 表）的新鲜度：首页、更多页、分类、搜索、收藏共用。
-   * 本地有数据但超过这个时间才联网刷新，未过期直接用本地。
-   * 时长由设置页「列表刷新间隔」控制，0 分钟表示不自动刷新（只用本地）。
+   * 页面（首页 / 更多 / 分类 / 搜索 / 详情 / 收藏 / 论坛）始终联网刷新：
+   * 本地数据只作首屏占位，进入页面或切回 Tab 就拉一次最新，不做 TTL 节流。
    */
-  static readonly DEFAULT_FEED_TTL_MINUTES: number = 60;
+  static readonly PAGE_TTL_MS: number = -1;
   /**
-   * 当前生效的刷新间隔（分钟）。页面里的过期判定是同步的
-   * （Date.now() - updatedAt > ttl），因此实例化时读到静态字段，
-   * 设置页保存后直接改这个字段，判定点立刻按新值走。
+   * 「立即刷新」的间隔哨兵值：每次都重建，用于内容项。
+   * 不能与「不自动」共用 0，因此单独取 -1（与「导出后立即删除」的哨兵约定一致）。
    */
-  private static feedTtlMinutes: number = CacheManager.DEFAULT_FEED_TTL_MINUTES;
+  static readonly IMMEDIATE_REFRESH_MINUTES: number = -1;
+  /** 内容项未单独设置时的默认重建间隔（分钟） */
+  static readonly DEFAULT_CONTENT_TTL_MINUTES: number = 60;
+  /**
+   * 刷新内容 3 项的重建间隔：只放设置过的 kind，缺省即默认值。
+   * 静态内存副本，供同步的过期判定直接读。
+   */
+  private static contentTtlOverrides: Map<string, number> = new Map<string, number>();
+  /** 内容项设置的 pref 键前缀（后缀是 content_*） */
+  private static readonly CONTENT_OVERRIDE_PREFIX: string = 'pref_content_refresh_minutes_';
   private static MAX_SEARCH_HISTORY = 9999;
 
   private settings: SettingDao;
@@ -49,24 +56,36 @@ export class CacheManager {
       let settings = await SettingDao.getInstance();
       let pages = await PageCacheDao.getInstance();
       let progress = await ProgressDao.getInstance();
-      CacheManager.feedTtlMinutes = settings.getNumber('pref_feed_refresh_minutes',
-        CacheManager.DEFAULT_FEED_TTL_MINUTES);
-      for (let kind of CacheManager.REFRESH_KINDS) {
-        CacheManager.autoRefresh.set(kind, settings.getNumber(`pref_auto_refresh_${kind}`, 1) !== 0);
+      // 内容项设置：没有 pref 行就用默认重建间隔
+      CacheManager.contentTtlOverrides.clear();
+      for (let kind of CacheManager.CONTENT_KINDS) {
+        let raw = settings.get(`${CacheManager.CONTENT_OVERRIDE_PREFIX}${kind}`, '');
+        if (raw === '') continue;
+        let minutes = Number(raw);
+        if (!Number.isNaN(minutes)) CacheManager.contentTtlOverrides.set(kind, minutes);
       }
-      // 字段/封面两个维度由 DAO 与图片仓库在同步路径上读取，这里推一份静态副本过去
-      AlbumDao.refreshFields = CacheManager.isAutoRefresh(CacheManager.CONTENT_FIELD);
-      AlbumDao.refreshCovers = CacheManager.isAutoRefresh(CacheManager.CONTENT_COVER);
+      // 字段/封面由 DAO 与图片仓库在同步路径上读取，这里推一份静态 TTL 过去
+      AlbumDao.fieldTtlMs = CacheManager.contentTtlMsOf(CacheManager.CONTENT_FIELD);
+      AlbumDao.coverTtlMs = CacheManager.contentTtlMsOf(CacheManager.CONTENT_COVER);
       CacheManager.instance = new CacheManager(settings, pages, progress);
     }
     return CacheManager.instance;
   }
 
-  /** 列表过期判定用的 TTL：0 分钟表示永不自动刷新 */
-  static feedTtlMs(): number {
-    return CacheManager.feedTtlMinutes <= 0
+  /** 分钟数换算成过期判定 TTL：-1 = 立即刷新（任何落库时间都算过期）；0 = 永不自动刷新 */
+  private static ttlMsOf(minutes: number): number {
+    if (minutes === CacheManager.IMMEDIATE_REFRESH_MINUTES) {
+      return -1;
+    }
+    return minutes <= 0
       ? Number.MAX_SAFE_INTEGER
-      : CacheManager.feedTtlMinutes * 60 * 1000;
+      : minutes * 60 * 1000;
+  }
+
+  /** 某内容项生效的重建间隔（分钟）：有设置用设置值，否则用默认值 */
+  static contentMinutesOf(kind: string): number {
+    let override = CacheManager.contentTtlOverrides.get(kind);
+    return override === undefined ? CacheManager.DEFAULT_CONTENT_TTL_MINUTES : override;
   }
 
   // ─── 通用方法 ───
@@ -126,7 +145,7 @@ export class CacheManager {
   loadCommentPage(kind: string, ownerId: string, page: number): CachedPage | null {
     let entry = this.pages.get(`${CacheManager.commentPrefix(kind, ownerId)}${page}`);
     if (!entry) return null;
-    if (Date.now() - entry.timestamp > CacheManager.feedTtlMsOf(CacheManager.REFRESH_FORUM)) {
+    if (Date.now() - entry.timestamp > CacheManager.feedTtlMs()) {
       return null;
     }
     return entry;
@@ -179,64 +198,58 @@ export class CacheManager {
     return this.getString('pref_order', 'mr');
   }
 
-  // ─── 刷新间隔 ───
+  // ─── 刷新内容间隔 ───
 
-  /** 刷新间隔（分钟）：0 表示不自动刷新，只用本地 */
-  saveFeedRefreshMinutes(minutes: number): void {
-    CacheManager.feedTtlMinutes = minutes;
-    this.put('pref_feed_refresh_minutes', `${minutes}`);
+  /** 内容项重建间隔（分钟）：-1 每次都重建，0 表示不自动重建 */
+  saveContentRefreshMinutesOf(kind: string, minutes: number): void {
+    let key = `${CacheManager.CONTENT_OVERRIDE_PREFIX}${kind}`;
+    CacheManager.contentTtlOverrides.set(kind, minutes);
+    this.put(key, `${minutes}`);
+    this.syncContentTtl(kind);
   }
 
-  getFeedRefreshMinutes(): number {
-    return CacheManager.feedTtlMinutes;
+  /** 内容项当前生效的重建间隔（分钟），未设置时返回默认 60 分钟 */
+  getContentRefreshMinutesOf(kind: string): number {
+    return CacheManager.contentMinutesOf(kind);
   }
 
-  // ─── 自动刷新范围（按内容种类开关）───
+  /** 把某项的 TTL 推给同步判定方（字段/封面在 DAO 与图片仓库侧读取） */
+  private syncContentTtl(kind: string): void {
+    let ttl = CacheManager.contentTtlMsOf(kind);
+    if (kind === CacheManager.CONTENT_FIELD) AlbumDao.fieldTtlMs = ttl;
+    if (kind === CacheManager.CONTENT_COVER) AlbumDao.coverTtlMs = ttl;
+  }
 
-  /** 内容种类：设置页的开关与页面过期判定共用这些键，也是 pref 键后缀 */
-  static readonly REFRESH_HOME: string = 'home';
-  static readonly REFRESH_CATEGORY: string = 'category';
-  /** 搜索结果快照（键 search:{词}:p{页}）；关掉后同一关键词永远用本地结果 */
-  static readonly REFRESH_SEARCH: string = 'search';
-  static readonly REFRESH_DETAIL: string = 'detail';
-  static readonly REFRESH_PROFILE: string = 'profile';
-  static readonly REFRESH_FORUM: string = 'forum';
+  // ─── 内容类别 ───
 
-  /**
-   * 刷新内容维度：刷新时重建哪些产物。
-   * 与上面的「刷新范围」正交——范围决定要不要联网，维度决定联网结果落到哪一层。
-   */
+  /** 刷新内容维度：联网拿到数据后重建哪一层，三项各自有间隔 */
   static readonly CONTENT_FIELD: string = 'content_field';
   static readonly CONTENT_COVER: string = 'content_cover';
   static readonly CONTENT_IMAGE: string = 'content_image';
 
-  /** 两组开关共用一套 pref 键：Map 里没有记录时按开启处理 */
-  static readonly REFRESH_KINDS: string[] =
-    ['home', 'category', 'search', 'detail', 'profile', 'forum',
-      'content_field', 'content_cover', 'content_image'];
+  /** 可单独设置间隔的内容项 */
+  static readonly CONTENT_KINDS: string[] =
+    ['content_field', 'content_cover', 'content_image'];
+
+  /** 页面过期判定：始终联网刷新（本地只作首屏占位） */
+  static feedTtlMs(): number {
+    return CacheManager.PAGE_TTL_MS;
+  }
+
+  /** 内容项的重建节流（ms）：-1 每次都重建，MAX 表示不自动重建 */
+  static contentTtlMsOf(kind: string): number {
+    return CacheManager.ttlMsOf(CacheManager.contentMinutesOf(kind));
+  }
 
   /**
-   * 各类内容是否允许自动刷新。页面过期判定是同步的，
-   * 所以除了 pref 之外再留一份静态内存副本，设置页改动后立即生效。
-   * Map 里没有记录时按开启处理（首次启动、getInstance 之前都安全）。
+   * 某层产物距上次重建是否已到间隔。
+   * lastAt 为 0（从未重建）按到期处理；设为「不自动」则永远不到期。
    */
-  private static autoRefresh: Map<string, boolean> = new Map<string, boolean>();
-
-  static isAutoRefresh(kind: string): boolean {
-    return CacheManager.autoRefresh.get(kind) ?? true;
-  }
-
-  saveAutoRefresh(kind: string, enabled: boolean): void {
-    CacheManager.autoRefresh.set(kind, enabled);
-    this.put(`pref_auto_refresh_${kind}`, enabled ? '1' : '0');
-    // DAO 的字段写入是同步路径，开关改完立刻推过去
-    if (kind === CacheManager.CONTENT_FIELD) AlbumDao.refreshFields = enabled;
-    if (kind === CacheManager.CONTENT_COVER) AlbumDao.refreshCovers = enabled;
-  }
-
-  /** 某类内容的过期 TTL：关掉自动刷新等价于「永不过期」，只用本地 */
-  static feedTtlMsOf(kind: string): number {
-    return CacheManager.isAutoRefresh(kind) ? CacheManager.feedTtlMs() : Number.MAX_SAFE_INTEGER;
+  static contentDue(kind: string, lastAt: number): boolean {
+    let ttl = CacheManager.contentTtlMsOf(kind);
+    if (ttl === Number.MAX_SAFE_INTEGER) return false;
+    if (ttl < 0) return true;
+    return lastAt <= 0 || Date.now() - lastAt >= ttl;
   }
 
   // ─── 图片仓库自动清理策略 ───
@@ -395,5 +408,15 @@ export class CacheManager {
    */
   clearAllReadPositions(): number {
     return this.progress.clearAllPositions();
+  }
+
+  /**
+   * 清空全部阅读记录：已读标记、最后阅读章节与阅读位置一起清掉。
+   * 之后章节不再显示"已读"，打开漫画从第一章第 1 页开始；
+   * 阅读缓存的活跃时间判定退回用目录写入时间。
+   * @returns 清除的漫画数量
+   */
+  clearAllReadHistory(): number {
+    return this.progress.clearAllReadHistory();
   }
 }

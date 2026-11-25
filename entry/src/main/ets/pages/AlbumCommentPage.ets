@@ -57,7 +57,10 @@ struct AlbumCommentPage {
         comments.push(parseCommentRaw(raw));
       }
     }
-    this.comments = comments;
+    // 本地读不到评论时不覆盖屏上内容，旧评论留到新数据落库
+    if (comments.length > 0) {
+      this.comments = comments;
+    }
     if (total > 0) {
       this.totalComments = total;
     }
@@ -114,8 +117,8 @@ struct AlbumCommentPage {
       this.isLoading = false;
       return;
     }
-    // 2. 本地缺失才走网络
-    this.isLoading = true;
+    // 2. 本地缺失才走网络；页面上已有评论时静默替换，不再进加载态
+    this.isLoading = this.comments.length === 0;
     try {
       let page = this.currentPage;
       let data: CommentPageData = await this.apiService.getComments('manhua', this.ownerId(), page);

@@ -3,14 +3,14 @@ import { relationalStore } from '@kit.ArkData';
 import { fileIo } from '@kit.CoreFileKit';
 import { JmAlbumDetail, JmPromoteSection, RespJmAlbumInfo } from '../models/dto/ApiDto';
 import {
-  applyAlbumPatch, albumPatchFromDetail, albumPatchFromList,
-  ComicAlbum, ComicAlbumPatch, ComicChapter, ComicCategory, ComicRelatedRef, emptyAlbum
+  albumPatchFromDetail, albumPatchFromList,
+  ComicAlbum, ComicAlbumPatch, ComicChapter, ComicCategory, ComicRelatedRef
 } from '../models/ComicAlbum';
 import {
   FeedAlbums, FeedAlbumsSection, feedFromList, feedFromPromote
 } from '../models/AlbumFeed';
 import {
-  AppDatabase, TABLE_ALBUM, TABLE_CHAPTER, TABLE_COMMENT
+  AppDatabase, TABLE_ALBUM, TABLE_CHAPTER, TABLE_COMMENT, TABLE_PREF
 } from './AppDatabase';
 import { FeedDao } from './FeedDao';
 
@@ -29,13 +29,14 @@ export class AlbumDao {
   private static instance: AlbumDao | null = null;
   private static staticBaseDir: string = '';
   /**
-   * 设置页「刷新内容」快照，由 CacheManager 读到设置后同步过来
-   * （DAO 不反向 import common 层）。
-   * - refreshFields：联网刷新是否覆盖本地已存的漫画字段
-   * - refreshCovers：封面名是否跟着刷新走（关闭时连 image_name 都不更新）
+   * 设置页「刷新内容」的节流参数，由 CacheManager 读到设置后同步过来
+   * （DAO 不反向 import common 层）。单位 ms：
+   * - fieldTtlMs：漫画字段（标题/作者/章节等）最多多久重建一次
+   * - coverTtlMs：封面最多多久换一次（旧图未到期时继续用）
+   * 0 表示每次都重建（未初始化时的安全默认），MAX 表示不自动重建。
    */
-  static refreshFields: boolean = true;
-  static refreshCovers: boolean = true;
+  static fieldTtlMs: number = 0;
+  static coverTtlMs: number = 0;
   private db: relationalStore.RdbStore;
 
   private constructor(db: relationalStore.RdbStore) {
@@ -95,98 +96,218 @@ export class AlbumDao {
   }
 
   /**
-   * 落库：album 整行 UPSERT + 章节目录全量替换，同一事务。
-   * album 表 27 列一次写全：固有字段、统计/用户态、拉取游标。
-   * fetchedAt === 0 表示统计从未拉取，此时四列写 NULL（与建表时的 NULL 语义一致）。
+   * 部分更新：只写 patch 里出现的列，其余列一律不动。
+   *
+   * 每次进页面都会联网，但落库范围由「当前页面真正拿到什么」决定：
+   * - 列表页只落摘要列（标题/封面/作者/分类/图片总数）；
+   * - 详情页落详情列与章节目录；
+   * - 没出现的列保持原值，因此本地已下载的目录、统计不会被空骨架覆盖。
+   *
+   * 已有记录时，字段列还受「刷新内容·漫画字段」间隔节流：未到期只透传
+   * 封面名与章节目录（新章节是本地没有的内容，立即可见）。
    */
-  save(album: ComicAlbum): void {
+  updateAlbum(albumId: number, patch: ComicAlbumPatch): boolean {
+    let existing = this.get(albumId);
+    let fieldsDue = existing === null || AlbumDao.fieldsDue(existing);
+    if (!fieldsDue) {
+      patch = AlbumDao.refreshOnlyPatch(patch);
+      if (patch.imageName === undefined && patch.chapters === undefined) return true;
+    }
+    // updated_at 记为「上次联网落库时间」；字段自身是否重建另记在 pref 的 fields_at 里
+    let at = Date.now();
     this.db.beginTransaction();
     try {
-      this.db.executeSync(
-        `INSERT INTO ${TABLE_ALBUM} (
-           id, series_id, title, description, image_name, add_time,
-           authors, category_id, category_title, sub_category_id, sub_category_title,
-           tags, works, actors, is_aids, price, total_picture, updated_at,
-           liked, is_favorite, purchased, total_views, likes, comment_total, related,
-           fetched_at, comment_page, comment_fetched_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           series_id          = excluded.series_id,
-           title              = excluded.title,
-           description        = excluded.description,
-           image_name         = excluded.image_name,
-           add_time           = excluded.add_time,
-           authors            = excluded.authors,
-           category_id        = excluded.category_id,
-           category_title     = excluded.category_title,
-           sub_category_id    = excluded.sub_category_id,
-           sub_category_title = excluded.sub_category_title,
-           tags               = excluded.tags,
-           works              = excluded.works,
-           actors             = excluded.actors,
-           is_aids            = excluded.is_aids,
-           price              = excluded.price,
-           total_picture      = excluded.total_picture,
-           updated_at         = excluded.updated_at,
-           liked              = excluded.liked,
-           is_favorite        = excluded.is_favorite,
-           purchased          = excluded.purchased,
-           total_views        = excluded.total_views,
-           likes              = excluded.likes,
-           comment_total      = excluded.comment_total,
-           related            = excluded.related,
-           fetched_at         = excluded.fetched_at,
-           comment_page       = excluded.comment_page,
-           comment_fetched_at = excluded.comment_fetched_at`,
-        [album.id, album.seriesId, album.title, album.description, album.imageName,
-          album.addTime, JSON.stringify(album.authors),
-          album.category.id, album.category.title,
-          album.subCategory.id, album.subCategory.title,
-          JSON.stringify(album.tags), JSON.stringify(album.works), JSON.stringify(album.actors),
-          album.isAids ? 1 : 0, album.price, album.totalPicture, album.updatedAt,
-          album.liked ? 1 : 0, album.isFavorite ? 1 : 0, album.purchased,
-          AlbumDao.fetchedValue(album.totalViews, album.fetchedAt),
-          AlbumDao.fetchedValue(album.likes, album.fetchedAt),
-          AlbumDao.fetchedValue(album.commentTotal, album.fetchedAt),
-          AlbumDao.fetchedValue(JSON.stringify(album.related), album.fetchedAt),
-          album.fetchedAt, album.commentPage, album.commentFetchedAt]);
-      this.db.executeSync(`DELETE FROM ${TABLE_CHAPTER} WHERE album_id = ?`, [album.id]);
-      for (let ch of album.chapters) {
-        this.db.executeSync(
-          `INSERT INTO ${TABLE_CHAPTER} (album_id, photo_id, id, title, sort)
-           VALUES (?, ?, ?, ?, ?)`,
-          [album.id, ch.photoId, ch.id, ch.title, ch.sort]);
-      }
+      this.upsertPatch(albumId, patch, at, existing);
+      if (patch.chapters !== undefined) this.replaceChapters(albumId, patch.chapters);
       this.db.commit();
     } catch (e) {
       this.db.rollBack();
-      console.warn(`[AlbumDao] save failed ${album.id}: ${JSON.stringify(e)}`);
+      console.warn(`[AlbumDao] update failed ${albumId}: ${JSON.stringify(e)}`);
+      return false;
+    }
+    if (fieldsDue) AlbumDao.markFieldsAt(albumId, at);
+    return true;
+  }
+
+  /**
+   * 列级 UPSERT：INSERT 只带 patch 出现的列（未出现的走 DDL 默认值），
+   * 冲突时也只更新这些列。统计四列从未拉取（fetchedAt === 0）时写 NULL，
+   * 使「没拉过」与「拉到了 0」可区分。
+   */
+  private upsertPatch(albumId: number, patch: ComicAlbumPatch, at: number,
+    existing: ComicAlbum | null): void {
+    let cols: string[] = ['id', 'updated_at'];
+    let vals: relationalStore.ValueType[] = [albumId, at];
+    if (patch.seriesId !== undefined) {
+      cols.push('series_id');
+      vals.push(patch.seriesId);
+    }
+    if (patch.title !== undefined) {
+      cols.push('title');
+      vals.push(patch.title);
+    }
+    if (patch.description !== undefined) {
+      cols.push('description');
+      vals.push(patch.description);
+    }
+    if (patch.imageName !== undefined) {
+      cols.push('image_name');
+      vals.push(patch.imageName);
+    }
+    if (patch.addTime !== undefined) {
+      cols.push('add_time');
+      vals.push(patch.addTime);
+    }
+    if (patch.authors !== undefined) {
+      cols.push('authors');
+      vals.push(JSON.stringify(patch.authors));
+    }
+    if (patch.category !== undefined) {
+      cols.push('category_id');
+      vals.push(patch.category.id);
+      cols.push('category_title');
+      vals.push(patch.category.title);
+    }
+    if (patch.subCategory !== undefined) {
+      cols.push('sub_category_id');
+      vals.push(patch.subCategory.id);
+      cols.push('sub_category_title');
+      vals.push(patch.subCategory.title);
+    }
+    if (patch.tags !== undefined) {
+      cols.push('tags');
+      vals.push(JSON.stringify(patch.tags));
+    }
+    if (patch.works !== undefined) {
+      cols.push('works');
+      vals.push(JSON.stringify(patch.works));
+    }
+    if (patch.actors !== undefined) {
+      cols.push('actors');
+      vals.push(JSON.stringify(patch.actors));
+    }
+    if (patch.isAids !== undefined) {
+      cols.push('is_aids');
+      vals.push(patch.isAids ? 1 : 0);
+    }
+    if (patch.price !== undefined) {
+      cols.push('price');
+      vals.push(patch.price);
+    }
+    if (patch.totalPicture !== undefined) {
+      cols.push('total_picture');
+      vals.push(patch.totalPicture);
+    }
+    if (patch.liked !== undefined) {
+      cols.push('liked');
+      vals.push(patch.liked ? 1 : 0);
+    }
+    if (patch.isFavorite !== undefined) {
+      cols.push('is_favorite');
+      vals.push(patch.isFavorite ? 1 : 0);
+    }
+    if (patch.purchased !== undefined) {
+      cols.push('purchased');
+      vals.push(patch.purchased);
+    }
+    let fetchedAt = patch.fetchedAt !== undefined ? patch.fetchedAt
+      : (existing !== null ? existing.fetchedAt : 0);
+    if (patch.fetchedAt !== undefined) {
+      cols.push('fetched_at');
+      vals.push(patch.fetchedAt);
+    }
+    if (patch.totalViews !== undefined) {
+      cols.push('total_views');
+      vals.push(AlbumDao.fetchedValue(patch.totalViews, fetchedAt));
+    }
+    if (patch.likes !== undefined) {
+      cols.push('likes');
+      vals.push(AlbumDao.fetchedValue(patch.likes, fetchedAt));
+    }
+    if (patch.commentTotal !== undefined) {
+      cols.push('comment_total');
+      vals.push(AlbumDao.fetchedValue(patch.commentTotal, fetchedAt));
+    }
+    if (patch.related !== undefined) {
+      cols.push('related');
+      vals.push(AlbumDao.fetchedValue(JSON.stringify(patch.related), fetchedAt));
+    }
+    if (patch.commentPage !== undefined) {
+      cols.push('comment_page');
+      vals.push(patch.commentPage);
+    }
+    if (patch.commentFetchedAt !== undefined) {
+      cols.push('comment_fetched_at');
+      vals.push(patch.commentFetchedAt);
+    }
+    let marks: string[] = [];
+    let updates: string[] = [];
+    for (let col of cols) {
+      marks.push('?');
+      if (col !== 'id') updates.push(`${col} = excluded.${col}`);
+    }
+    this.db.executeSync(
+      `INSERT INTO ${TABLE_ALBUM} (${cols.join(', ')}) VALUES (${marks.join(', ')})
+       ON CONFLICT(id) DO UPDATE SET ${updates.join(', ')}`, vals);
+  }
+
+  /** 章节目录整体替换（只有详情接口给了 series 时才调用） */
+  private replaceChapters(albumId: number, chapters: ComicChapter[]): void {
+    this.db.executeSync(`DELETE FROM ${TABLE_CHAPTER} WHERE album_id = ?`, [albumId]);
+    for (let ch of chapters) {
+      this.db.executeSync(
+        `INSERT INTO ${TABLE_CHAPTER} (album_id, photo_id, id, title, sort)
+         VALUES (?, ?, ?, ?, ?)`,
+        [albumId, ch.photoId, ch.id, ch.title, ch.sort]);
     }
   }
 
   /**
-   * 部分更新：只覆盖 patch 中出现的字段，其余保持原值。
-   * 实体不存在时按空骨架创建，因此「首页只拿到封面标题」也能先落一份摘要。
+   * 本地字段是否该重建：
+   * - 只有骨架（连标题都没有）说明从未拿到完整字段，立即补；
+   * - 其余按「刷新内容·漫画字段」间隔，-1 恒到期、0 每次都重建、MAX 不自动。
    */
-  updateAlbum(albumId: number, patch: ComicAlbumPatch): boolean {
-    let existing = this.get(albumId);
-    if (existing !== null && !AlbumDao.refreshFields) {
-      // 字段刷新关闭：本地已有内容原样保留，只把封面名（封面维度的版本标识）透下去；
-      // 封面也关掉时没有任何要写的字段，整行 UPSERT 一并省掉
-      patch = AlbumDao.coverOnlyPatch(patch);
-      if (patch.imageName === undefined) return true;
-    }
-    let album = existing ?? emptyAlbum(albumId);
-    applyAlbumPatch(album, patch);
-    album.updatedAt = Date.now();
-    this.save(album);
-    return true;
+  private static fieldsDue(album: ComicAlbum): boolean {
+    if (AlbumDao.fieldTtlMs < 0) return true;
+    if (album.title === '') return true;
+    let lastAt = AlbumDao.instance?.readFieldsAt(album.id) ?? 0;
+    return lastAt <= 0 || Date.now() - lastAt >= AlbumDao.fieldTtlMs;
   }
 
-  /** 从联网 patch 里只留下封面名（封面开关关闭时连它也不留） */
-  private static coverOnlyPatch(patch: ComicAlbumPatch): ComicAlbumPatch {
+  /** 字段上次重建时间存在 pref 表，随配置保留、不随「清理缓存」删除 */
+  private readFieldsAt(albumId: number): number {
+    let rs = this.db.querySqlSync(
+      `SELECT pref_value FROM ${TABLE_PREF} WHERE pref_key = ?`, [AlbumDao.fieldsAtKey(albumId)]);
+    try {
+      if (!rs.goToFirstRow()) return 0;
+      return Number(rs.getString(rs.getColumnIndex('pref_value'))) || 0;
+    } finally {
+      rs.close();
+    }
+  }
+
+  private static markFieldsAt(albumId: number, at: number): void {
+    let dao = AlbumDao.instance;
+    if (dao === null) return;
+    dao.db.executeSync(
+      `INSERT INTO ${TABLE_PREF} (pref_key, pref_value) VALUES (?, ?)
+       ON CONFLICT(pref_key) DO UPDATE SET pref_value = excluded.pref_value`,
+      [AlbumDao.fieldsAtKey(albumId), `${at}`]);
+  }
+
+  private static fieldsAtKey(albumId: number): string {
+    return `album_fields_at_${albumId}`;
+  }
+
+  /**
+   * 从联网 patch 里只留下「即时生效」的部分：
+   * - imageName：封面换版的版本标识（封面图是否重下由 ComicLibrary 按间隔决定）
+   * - chapters：章节目录，新增章节属于本地没有的内容，不等字段间隔
+   */
+  private static refreshOnlyPatch(patch: ComicAlbumPatch): ComicAlbumPatch {
     let result: ComicAlbumPatch = {} as ComicAlbumPatch;
-    if (AlbumDao.refreshCovers) result.imageName = patch.imageName;
+    if (patch.imageName !== undefined) result.imageName = patch.imageName;
+    if (patch.chapters !== undefined) result.chapters = patch.chapters;
     return result;
   }
 

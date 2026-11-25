@@ -60,7 +60,7 @@ struct HomePage {
   @State isRefreshing: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
-  /** 设置页改了刷新间隔 / 切回首页时递增，按新的 TTL 重新判断 */
+  /** 切回首页时递增：先渲染本地，再联网拉最新 */
   @StorageProp('feedRefreshTick') @Watch('onFeedRefreshTick') feedRefreshTick: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
@@ -97,7 +97,7 @@ struct HomePage {
 
   /** 本地是否过期：落库时间早于 TTL（间隔与开关都由设置页控制） */
   private isStale(): boolean {
-    return Date.now() - this.localUpdatedAt > CacheManager.feedTtlMsOf(CacheManager.REFRESH_HOME);
+    return Date.now() - this.localUpdatedAt > CacheManager.feedTtlMs();
   }
 
   onFeedRefreshTick(): void {
@@ -390,7 +390,7 @@ struct ProfilePage {
   /** 冷启动静默复验中：期间不发起需要登录的请求，避免拿未验证的会话打空枪 */
   @StorageProp('sessionPending') @Watch('onSessionPendingChanged') sessionPending: boolean = false;
   @StorageProp('activeUsername') @Watch('onActiveUserChanged') activeUsername: string = '';
-  /** 设置页改了刷新间隔 / 切回个人中心时递增，按新的 TTL 重新判断 */
+  /** 切回个人中心时递增，按新的 TTL 重新判断 */
   @StorageProp('feedRefreshTick') @Watch('onFeedRefreshTick') feedRefreshTick: number = 0;
   /** 收藏 / 历史各自最近一次落库时间 */
   private favLocalUpdatedAt: number = 0;
@@ -399,6 +399,8 @@ struct ProfilePage {
   @State favFolders: FavoriteFolderItem[] = [];
   @State favCurrentFolderId: string = '0';
   @State favIsLoading: boolean = false;
+  /** 收藏请求在跑：与 favIsLoading 分开，静默刷新时不显示加载态但同样挡重复 */
+  private favIsFetching: boolean = false;
   @State favCurrentPage: number = 1;
   @State favHasMore: boolean = true;
   @State favTotal: number = 0;
@@ -408,6 +410,8 @@ struct ProfilePage {
   @State watchLoadFailed: boolean = false;
   @State watchAlbums: AlbumViewModel[] = [];
   @State watchIsLoading: boolean = false;
+  /** 历史请求在跑：与 watchIsLoading 分开，静默刷新时不显示加载态但同样挡重复 */
+  private watchIsFetching: boolean = false;
   @State watchCurrentPage: number = 1;
   @State watchHasMore: boolean = true;
   // 历史管理态：长按进入，复选框多选，底部胶囊承载删除/取消
@@ -563,7 +567,10 @@ struct ProfilePage {
           this.apiService.coverSource(album.id, '_3x4', album.imageName)));
       }
     }
-    this.favAlbums = albums;
+    // 本地这个收藏夹读不到内容时保留屏上列表，旧内容留到新数据落库
+    if (albums.length > 0) {
+      this.favAlbums = albums;
+    }
     if (this.cache) {
       let folders = this.cache.loadFavoriteFolders(this.loadedUsername);
       if (folders.length > 0) {
@@ -586,40 +593,39 @@ struct ProfilePage {
   }
 
   async loadFavorites(): Promise<void> {
-    if (this.favIsLoading) return;
-    // 一进函数就置加载态：读库这几毫秒也别让用户看到"还没有收藏"
-    this.favIsLoading = true;
+    if (this.favIsFetching) return;
+    this.favIsFetching = true;
     this.favLoadFailed = false;
     let prefix = this.favPrefix();
     let page = this.favCurrentPage;
-    // 1. 本地优先：首页回放全部已落库页，翻页只看这一页在不在
-    if (page === 1) {
-      let hasLocal = await this.renderFavoritesFromStore();
-      if (hasLocal && !this.isFavStale()) {
-        let pages = await AlbumDao.feedPageNumbers(prefix);
-        this.favCurrentPage = pages.length > 0 ? pages[pages.length - 1] : 1;
-        this.favNeedLoad = false;
-        this.favIsLoading = false;
-        return;
-      }
-      if (hasLocal) {
-        // 过期：收藏夹整体作废，从第一页重拉
-        await AlbumDao.clearFeedPrefix(prefix);
-        this.favAlbums = [];
-        this.favCurrentPage = 1;
-        page = 1;
-      }
-    } else {
-      let cached = await AlbumDao.loadFeed(`${prefix}${page}`);
-      if (cached.sections.length > 0 && cached.sections[0].albums.length > 0) {
-        await this.renderFavoritesFromStore();
-        this.favHasMore = cached.sections[0].albums.length >= PAGE_SIZE_FAVORITE;
-        this.favIsLoading = false;
-        return;
-      }
-    }
-    // 2. 本地缺失才走网络
+    // 首屏无内容 → 全屏加载态；翻页 → 底部加载条；
+    // 刷新（第一页且已有内容，含切收藏夹 / 过期重拉）→ 静默替换，旧列表留到新数据落库
+    this.favIsLoading = this.favAlbums.length === 0 || page > 1;
     try {
+      // 1. 本地优先：首页回放全部已落库页，翻页只看这一页在不在
+      if (page === 1) {
+        let hasLocal = await this.renderFavoritesFromStore();
+        if (hasLocal && !this.isFavStale()) {
+          let pages = await AlbumDao.feedPageNumbers(prefix);
+          this.favCurrentPage = pages.length > 0 ? pages[pages.length - 1] : 1;
+          this.favNeedLoad = false;
+          return;
+        }
+        if (hasLocal) {
+          // 过期：旧分页作废回第一页重拉，不清 favAlbums，避免整页闪成加载态
+          await AlbumDao.clearFeedPrefix(prefix);
+          this.favCurrentPage = 1;
+          page = 1;
+        }
+      } else {
+        let cached = await AlbumDao.loadFeed(`${prefix}${page}`);
+        if (cached.sections.length > 0 && cached.sections[0].albums.length > 0) {
+          await this.renderFavoritesFromStore();
+          this.favHasMore = cached.sections[0].albums.length >= PAGE_SIZE_FAVORITE;
+          return;
+        }
+      }
+      // 2. 本地缺失才走网络
       let resp = await this.apiService.getFavorites(page, this.favCurrentFolderId);
       if (resp.code === 200 && resp.data) {
         let pageData = resp.data;
@@ -632,11 +638,16 @@ struct ProfilePage {
         }
         await this.renderFavoritesFromStore();
         this.favHasMore = pageData.list.length >= PAGE_SIZE_FAVORITE;
+        // 第一页确认空（该收藏夹本来就没内容）→ 清屏显空态
+        if (page === 1 && items.length === 0) {
+          this.favAlbums = [];
+        }
       }
     } catch (err) {
       console.error('[ProfilePage] loadFavorites error:', JSON.stringify(err));
       this.favLoadFailed = true;
     } finally {
+      this.favIsFetching = false;
       this.favIsLoading = false;
     }
   }
@@ -646,7 +657,7 @@ struct ProfilePage {
     this.favCurrentFolderId = folderId;
     this.favCurrentPage = 1;
     this.favHasMore = true;
-    this.favAlbums = [];
+    // 不清列表：旧收藏夹内容留到新收藏夹落库后替换
     this.loadFavorites();
   }
 
@@ -668,18 +679,21 @@ struct ProfilePage {
           this.apiService.coverSource(album.id, '_3x4', album.imageName)));
       }
     }
-    this.watchAlbums = albums;
-    this.watchTotal = albums.length;
+    // 本地读不到历史时保留屏上列表，旧内容留到新数据落库
+    if (albums.length > 0) {
+      this.watchAlbums = albums;
+      this.watchTotal = albums.length;
+    }
     return albums.length > 0;
   }
 
   /** 收藏 / 历史本地数据是否过期（间隔与开关都由设置页控制） */
   private isFavStale(): boolean {
-    return Date.now() - this.favLocalUpdatedAt > CacheManager.feedTtlMsOf(CacheManager.REFRESH_PROFILE);
+    return Date.now() - this.favLocalUpdatedAt > CacheManager.feedTtlMs();
   }
 
   private isWatchStale(): boolean {
-    return Date.now() - this.watchLocalUpdatedAt > CacheManager.feedTtlMsOf(CacheManager.REFRESH_PROFILE);
+    return Date.now() - this.watchLocalUpdatedAt > CacheManager.feedTtlMs();
   }
 
   onFeedRefreshTick(): void {
@@ -744,39 +758,37 @@ struct ProfilePage {
   }
 
   async loadWatchHistory(): Promise<void> {
-    if (this.watchIsLoading) return;
-    // 一进函数就置加载态：读库这几毫秒也别让用户看到空历史
-    this.watchIsLoading = true;
+    if (this.watchIsFetching) return;
+    this.watchIsFetching = true;
     this.watchLoadFailed = false;
     let prefix = this.watchPrefix();
     let page = this.watchCurrentPage;
-    // 1. 本地优先
-    if (page === 1) {
-      let hasLocal = await this.renderWatchFromStore();
-      if (hasLocal && !this.isWatchStale()) {
-        let pages = await AlbumDao.feedPageNumbers(prefix);
-        this.watchCurrentPage = pages.length > 0 ? pages[pages.length - 1] : 1;
-        this.watchIsLoading = false;
-        return;
-      }
-      if (hasLocal) {
-        // 过期：历史整体作废，从第一页重拉
-        await AlbumDao.clearFeedPrefix(prefix);
-        this.watchAlbums = [];
-        this.watchCurrentPage = 1;
-        page = 1;
-      }
-    } else {
-      let cached = await AlbumDao.loadFeed(`${prefix}${page}`);
-      if (cached.sections.length > 0 && cached.sections[0].albums.length > 0) {
-        await this.renderWatchFromStore();
-        this.watchHasMore = cached.sections[0].albums.length > 0;
-        this.watchIsLoading = false;
-        return;
-      }
-    }
-    // 2. 本地缺失才走网络
+    // 首屏无内容 → 全屏加载态；翻页 → 底部加载条；过期重拉 → 静默替换
+    this.watchIsLoading = this.watchAlbums.length === 0 || page > 1;
     try {
+      // 1. 本地优先
+      if (page === 1) {
+        let hasLocal = await this.renderWatchFromStore();
+        if (hasLocal && !this.isWatchStale()) {
+          let pages = await AlbumDao.feedPageNumbers(prefix);
+          this.watchCurrentPage = pages.length > 0 ? pages[pages.length - 1] : 1;
+          return;
+        }
+        if (hasLocal) {
+          // 过期：旧分页作废回第一页重拉，不清 watchAlbums，避免整页闪成加载态
+          await AlbumDao.clearFeedPrefix(prefix);
+          this.watchCurrentPage = 1;
+          page = 1;
+        }
+      } else {
+        let cached = await AlbumDao.loadFeed(`${prefix}${page}`);
+        if (cached.sections.length > 0 && cached.sections[0].albums.length > 0) {
+          await this.renderWatchFromStore();
+          this.watchHasMore = cached.sections[0].albums.length > 0;
+          return;
+        }
+      }
+      // 2. 本地缺失才走网络
       let resp = await this.apiService.getWatchList(page);
       if (resp.code === 200 && resp.data) {
         let items = resp.data.list;
@@ -785,11 +797,16 @@ struct ProfilePage {
         await this.renderWatchFromStore();
         // 无新数据时停止加载
         this.watchHasMore = items.length > 0;
+        // 第一页确认空（没有任何历史）→ 清屏显空态
+        if (page === 1 && items.length === 0) {
+          this.watchAlbums = [];
+        }
       }
     } catch (err) {
       console.error('[ProfilePage] loadWatchHistory error:', JSON.stringify(err));
       this.watchLoadFailed = true;
     } finally {
+      this.watchIsFetching = false;
       this.watchIsLoading = false;
       // 本地计算历史总数
       this.watchTotal = this.watchAlbums.length;
@@ -797,7 +814,7 @@ struct ProfilePage {
   }
 
   loadMoreWatch(): void {
-    if (this.watchIsLoading || !this.watchHasMore) return;
+    if (this.watchIsFetching || !this.watchHasMore) return;
     this.watchCurrentPage++;
     this.loadWatchHistory();
   }
@@ -1151,7 +1168,7 @@ struct ProfilePage {
                 scrollBackward: NestedScrollMode.SELF_FIRST
               })
               .onReachEnd(() => {
-                if (this.favHasMore && !this.favIsLoading) {
+                if (this.favHasMore && !this.favIsFetching) {
                   this.favCurrentPage++;
                   this.loadFavorites();
                 }
@@ -1259,7 +1276,7 @@ struct ProfilePage {
                 scrollBackward: NestedScrollMode.SELF_FIRST
               })
               .onReachEnd(() => {
-                if (this.watchHasMore && !this.watchIsLoading) {
+                if (this.watchHasMore && !this.watchIsFetching) {
                   this.loadMoreWatch();
                 }
               })
@@ -1286,9 +1303,9 @@ struct ProfilePage {
           .margin({ top: 12 })
           .onAppear(() => {
             if (this.isLoggedIn) {
+              // 切回收藏 tab 只做一次静默校验，不清列表，避免整页闪成加载态
               this.favCurrentPage = 1;
               this.favHasMore = true;
-              this.favAlbums = [];
               this.favNeedLoad = true;
               this.loadFavorites();
             }
@@ -1516,7 +1533,7 @@ struct CategoryPage {
   @State isRefreshing: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
-  /** 设置页改了刷新间隔 / 切回分类页时递增，按新的 TTL 重新判断 */
+  /** 切回分类页时递增，按新的 TTL 重新判断 */
   @StorageProp('feedRefreshTick') @Watch('onFeedRefreshTick') feedRefreshTick: number = 0;
   private apiService: ApiService = ApiService.getInstance();
   private cache: CacheManager | null = null;
@@ -1572,10 +1589,9 @@ struct CategoryPage {
       return;
     }
     if (hasLocal) {
-      // 过期：整列表作废回第一页重拉，避免新旧分页拼在一起
-      this.isLoading = true;
+      // 过期：旧分页不再对应这份列表，整批作废后从第一页重拉；
+      // 不清 this.albums：旧内容留在屏上，新数据落库后由 renderFromStore 整体替换
       await AlbumDao.clearFeedPrefix(this.pagePrefix);
-      this.albums = [];
     }
     this.currentPage = 1;
     await this.loadAlbums();
@@ -1583,7 +1599,7 @@ struct CategoryPage {
 
   /** 本地列表是否过期（间隔与开关都由设置页控制） */
   private isStale(): boolean {
-    return Date.now() - this.localUpdatedAt > CacheManager.feedTtlMsOf(CacheManager.REFRESH_CATEGORY);
+    return Date.now() - this.localUpdatedAt > CacheManager.feedTtlMs();
   }
 
   onFeedRefreshTick(): void {
@@ -1604,7 +1620,11 @@ struct CategoryPage {
           this.apiService.coverSource(album.id, '_3x4', album.imageName)));
       }
     }
-    this.albums = albums;
+    // 本地这一批读不到内容时不覆盖屏上列表：切分类 / 排序时旧内容要一直留到新数据落库，
+    // 否则列表被清空，isLoading 的「无内容才进加载态」判据就会成立
+    if (albums.length > 0) {
+      this.albums = albums;
+    }
     return albums.length > 0;
   }
 
@@ -1622,7 +1642,9 @@ struct CategoryPage {
       return;
     }
     // 2. 本地缺失才走网络
-    this.isLoading = true;
+    // 只有页面上还没有内容（首次启动）才进加载态；换分类 / 排序 / 过期重拉时
+    // 已有内容就静默替换，翻页（page > 1）仍显示底部加载条
+    this.isLoading = page > 1 || this.albums.length === 0;
     this.loadFailed = false;
     try {
       let resp = await this.apiService.getCategoryList(
@@ -1643,6 +1665,11 @@ struct CategoryPage {
         }
         await this.renderFromStore();
         this.hasMore = data.content.length >= 20;
+        // 接口确认第一页就是空（这个分类确实没有内容）→ 清屏显空态，
+        // 否则「本地读不到不清空」会把上一个分类的列表一直留在屏上
+        if (page === 1 && data.content.length === 0) {
+          this.albums = [];
+        }
       } else {
         console.error(`[CategoryPage] getCategoryList failed: code=${resp.code}, message=${resp.message}`);
         this.loadFailed = true;
@@ -1660,8 +1687,7 @@ struct CategoryPage {
     this.currentCategory = category;
     this.currentPage = 1;
     this.hasMore = true;
-    this.albums = [];
-    this.isLoading = true;
+    // 不清 albums、不置 isLoading：旧列表留在屏上，新分类落库后整体替换
     this.rebuildPagePrefix();
     await this.loadFirstPage();
   }
@@ -1671,8 +1697,7 @@ struct CategoryPage {
     this.currentOrder = order;
     this.currentPage = 1;
     this.hasMore = true;
-    this.albums = [];
-    this.isLoading = true;
+    // 同上：排序切换也走替换式，避免整页闪成加载态
     this.rebuildPagePrefix();
     await this.loadFirstPage();
   }
@@ -1989,7 +2014,7 @@ struct ForumPage {
   @State isRefreshing: boolean = false;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
-  /** 设置页改了刷新间隔 / 切回讨论区时递增，按新的 TTL 重新判断 */
+  /** 切回讨论区时递增，按新的 TTL 重新判断 */
   @StorageProp('feedRefreshTick') @Watch('onFeedRefreshTick') feedRefreshTick: number = 0;
   private apiService: ApiService = ApiService.getInstance();
 
@@ -2027,7 +2052,11 @@ struct ForumPage {
         comments.push(parseCommentRaw(raw));
       }
     }
-    this.comments = comments;
+    // 本地没有这个模式的数据时不覆盖屏上评论：切模式时旧评论留到新数据落库，
+    // 否则 comments 被清空，就会退回整页加载态
+    if (comments.length > 0) {
+      this.comments = comments;
+    }
     if (total > 0) {
       this.totalComments = total;
     }
@@ -2043,7 +2072,8 @@ struct ForumPage {
       return;
     }
     // 2. 本地缺失才走网络
-    this.isLoading = true;
+    // 只有页面上还没有评论（首次启动）才进加载态；切模式时已有内容静默替换
+    this.isLoading = this.comments.length === 0;
     try {
       let page = this.currentPage;
       let data: CommentPageData = await this.apiService.getComments(this.currentMode, '', page);
@@ -2098,7 +2128,7 @@ struct ForumPage {
     if (this.currentMode === mode) return;
     this.currentMode = mode;
     this.currentPage = 1;
-    this.comments = [];
+    // 不清 comments：旧模式的评论留在屏上，新模式落库后由 renderFromStore 整体替换
     this.hasMore = true;
     await this.loadComments();
   }
@@ -2418,7 +2448,10 @@ struct Index {
     }
   }
 
-  /** 冷启动后台清理：阅读缓存按设置天数、已导出内容按设置天数，手动下载未导出内容不动 */
+  /**
+   * 冷启动后台清理：粒度是整部漫画——阅读缓存超期就整本删图，
+   * 阅读记录（已读标记、页码、最后阅读章节）保留；手动下载未导出的内容不动。
+   */
   private async autoCleanupLibrary(): Promise<void> {
     try {
       let cache = await CacheManager.getInstance();

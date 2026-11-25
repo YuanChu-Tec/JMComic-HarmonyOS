@@ -26,6 +26,8 @@ struct SearchPage {
   private isPulling: boolean = false;
   /** 本地结果最近一次落库时间，用来判断是否过期 */
   private localUpdatedAt: number = 0;
+  /** 请求在跑：与 isLoading 分开，静默刷新时不显示加载态但同样要挡重复触发 */
+  private isSearching: boolean = false;
   private isTablet: boolean = (display.getDefaultDisplaySync().width / display.getDefaultDisplaySync().densityPixels) >= 600;
 
   // NavDestination 标准入口：参数与数据加载移入 onReady（原 router.getParams 时代在 aboutToAppear）
@@ -71,10 +73,9 @@ struct SearchPage {
     if (isNewSearch) {
       this.currentPage = 1;
       this.hasSearched = true;
-      this.albums = [];
     }
 
-    if (this.isLoading) return;
+    if (this.isSearching) return;
 
     // 保存搜索历史
     if (isNewSearch && this.cache) {
@@ -82,8 +83,10 @@ struct SearchPage {
       this.searchHistory = this.cache.getSearchHistory();
     }
 
-    // 一进函数就置加载态：读库这几毫秒也别让用户看到空列表
-    this.isLoading = true;
+    // 只有页面上还没有结果（首次启动）才进加载态：换关键词时旧结果留在屏上，
+    // 新结果落库后由 renderFromStore 整体替换；翻页仍显示底部加载条
+    this.isSearching = true;
+    this.isLoading = !isNewSearch || this.albums.length === 0;
     this.searchFailed = false;
 
     // 本地优先：新搜索回放全部已落库页，翻页只看这一页在不在
@@ -97,9 +100,8 @@ struct SearchPage {
         return;
       }
       if (hasLocal) {
-        // 过期：整个关键词的本地结果作废，重新从第一页拉
+        // 过期：旧分页作废回第一页重拉，不清 albums，避免整页闪成加载态
         await AlbumDao.clearFeedPrefix(prefix);
-        this.albums = [];
         this.currentPage = 1;
       }
     } else {
@@ -122,11 +124,17 @@ struct SearchPage {
         await AlbumDao.saveFeed(`${prefix}${this.currentPage}`, resp.data.content, parseInt(resp.data.total) || 0);
         await this.renderFromStore(prefix);
         this.hasMore = resp.data.content.length >= 20;
+        // 新搜索第一页确认无结果 → 清屏显示「未找到」，
+        // 否则旧关键词的结果会一直留在屏上
+        if (isNewSearch && resp.data.content.length === 0) {
+          this.albums = [];
+        }
       }
     } catch (err) {
       console.error('search error:', JSON.stringify(err));
       this.searchFailed = true;
     } finally {
+      this.isSearching = false;
       this.isLoading = false;
     }
   }
@@ -144,13 +152,17 @@ struct SearchPage {
           this.apiService.coverSource(album.id, '_3x4', album.imageName)));
       }
     }
-    this.albums = albums;
+    // 本地读不到这个关键词的结果时不覆盖屏上列表：换关键词时旧结果留到新数据落库，
+    // 否则列表被清空，isLoading 的「无内容才进加载态」判据就会成立
+    if (albums.length > 0) {
+      this.albums = albums;
+    }
     return albums.length > 0;
   }
 
   /** 本地结果是否过期（TTL 由设置页的间隔 + 「搜索列表」开关共同控制） */
   private isStale(): boolean {
-    return Date.now() - this.localUpdatedAt > CacheManager.feedTtlMsOf(CacheManager.REFRESH_SEARCH);
+    return Date.now() - this.localUpdatedAt > CacheManager.feedTtlMs();
   }
 
   /**
@@ -193,7 +205,7 @@ struct SearchPage {
   }
 
   loadMore(): void {
-    if (!this.hasMore || this.isLoading) return;
+    if (!this.hasMore || this.isSearching) return;
     this.currentPage++;
     this.doSearch(false);
   }

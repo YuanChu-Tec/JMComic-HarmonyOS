@@ -165,9 +165,9 @@ export class ComicLibrary {
     return `${ComicLibrary.albumDirOf(Number(albumId))}/cover${size}.jpg`;
   }
 
-  /** 版本标识：关闭封面刷新或封面名未知时返回空串，退化为无版本文件 */
+  /** 版本标识：封面名未知时返回空串，退化为无版本文件 */
   private static coverVersion(imageName: string): string {
-    if (!AlbumDao.refreshCovers || imageName === '') return '';
+    if (imageName === '') return '';
     let hash = 5381;
     for (let i = 0; i < imageName.length; i++) {
       hash = ((hash << 5) - hash + imageName.charCodeAt(i)) | 0;
@@ -182,24 +182,30 @@ export class ComicLibrary {
     return `${ComicLibrary.albumDirOf(Number(albumId))}/cover${size}-${ver}.jpg`;
   }
 
-  /** 本地可用返回 file:// URI；文件缺失返回空串 */
+  /**
+   * 本地可用返回 file:// URI；文件缺失返回空串。
+   * 服务器换了封面名时，旧图是否继续用由「刷新内容·封面」的间隔决定：
+   * 未到间隔沿用旧图，到期返回空串让调用方下载新版本。
+   */
   static coverLocalUri(albumId: string | number, size: string, imageName: string = ''): string {
     let path = ComicLibrary.coverPathOf(albumId, size, imageName);
     if (fileIo.accessSync(path)) return `file://${path}`;
-    // 版本化首次启用：旧的无版本封面改名沿用，避免一次性全量重下
-    let legacy = ComicLibrary.coverPath(albumId, size);
-    if (path !== legacy && fileIo.accessSync(legacy)) {
-      try {
-        fileIo.renameSync(legacy, path);
-        return `file://${path}`;
-      } catch (e) {
-        console.warn(`[ComicLibrary] adopt cover failed ${path}: ${JSON.stringify(e)}`);
-      }
+    // 拿不到封面名（如下载管理页）或目录里没有旧图时，只能按无版本文件兜底
+    let cached = ComicLibrary.findCover(albumId, size);
+    if (cached === '' || imageName === '') return cached;
+    return ComicLibrary.coverDue(cached) ? '' : cached;
+  }
+
+  /** 旧封面是否到了换版时间：MAX 永不换，-1 每次都换，其余按文件修改时间 */
+  private static coverDue(localUri: string): boolean {
+    if (AlbumDao.coverTtlMs === Number.MAX_SAFE_INTEGER) return false;
+    if (AlbumDao.coverTtlMs < 0) return true;
+    try {
+      let stat = fileIo.statSync(localUri.replace('file://', ''));
+      return Date.now() - stat.mtime * 1000 >= AlbumDao.coverTtlMs;
+    } catch (e) {
+      return true;
     }
-    // 关掉封面刷新时目录里的任一张同尺寸封面都算数（含之前下载的版本化文件）；
-    // 开启时只有拿不到封面名（如下载管理页）才兜底——否则会把旧版本图当成当前版本，换版永不生效
-    if (imageName === '' || !AlbumDao.refreshCovers) return ComicLibrary.findCover(albumId, size);
-    return '';
   }
 
   /** 目录里已有的同尺寸封面（cover{size}.jpg 或 cover{size}-*.jpg），没有返回空串 */
@@ -615,19 +621,17 @@ export class ComicLibrary {
 
   /**
    * 确保某页存在：本地有这一页就直接用，没有才下载并原子落盘。
-   * 设置页「刷新内容·图片」开启时，比对已提交版本里这一页的 img_name（及 scramble_id），
-   * 服务器换图就重下覆盖；关闭时不再嗅探，本地有就一直用。
+   * 已落盘章节比对这一页的 img_name（及 scramble_id），服务器换图才重下；
+   * 是否重新嗅探受「刷新内容·章节图片」间隔约束——未到期或设为「不自动」时本地有就一直用。
    * 未提交的章节（下载中断）指纹为空，按同一批处理，不重复下载已完成页。
    */
   async ensureImage(ctx: LibraryContext, index: number, img: JmImageInfo): Promise<string> {
     let path = this.getImagePath(ctx, index);
     if (fileIo.accessSync(path)) {
-      if (!CacheManager.isAutoRefresh(CacheManager.CONTENT_IMAGE)) {
-        this.ensureChapterIndex(ctx);
-        return path;
-      }
       let meta = this.getChapterMeta(ctx);
-      if (meta === null || !ComicLibrary.pageChanged(meta, ctx, index, img.img_name)) {
+      if (meta === null
+        || !CacheManager.contentDue(CacheManager.CONTENT_IMAGE, meta.updatedAt)
+        || !ComicLibrary.pageChanged(meta, ctx, index, img.img_name)) {
         this.ensureChapterIndex(ctx);
         return path;
       }
@@ -868,11 +872,14 @@ export class ComicLibrary {
   }
 
   /**
-   * 按规则清理。用户态时间都来自 SQL：
-   * - 最后阅读时间 → read_state（tick 与 read_at 取大）
-   * - 导出时间     → pref 的 exported_{albumId}
-   * 目录本身只提供「有什么、是否手动下载」，不参与时间判定，
-   * 因此「取消导出」删掉 pref 键后，这里立刻不再按旧导出时间删文件。
+   * 按规则清理，判定与删除的粒度都是「一整部漫画」：
+   * - 阅读缓存：把整本各章的「阅读时间 or 目录写入时间」取最大作为该漫画的活跃时间，
+   *   超期就把整本的非手动下载章节一起删，不留下零散几章；
+   * - 已导出内容：导出时间本身就是整本的，超期就整本的手动下载章节一起删。
+   *
+   * 用户态时间都来自 SQL：最后阅读时间 → read_state（tick 与 read_at 取大），
+   * 导出时间 → pref 的 exported_{albumId}；目录只提供「有什么、是否手动下载」。
+   * 清理只删图片，阅读记录（已读标记、页码、最后阅读章节）全部保留。
    */
   async cleanup(rule: CleanupRule): Promise<CleanupResult> {
     let now = Date.now();
@@ -892,14 +899,22 @@ export class ComicLibrary {
       let exportedAt = this.cache ? this.cache.getAlbumExportedAt(albumId) : 0;
       let reads: Map<string, number> = this.progress
         ? this.progress.lastActivityOfAlbum(albumId) : new Map<string, number>();
+      // 整本活跃时间只由阅读缓存章节决定（手动下载的章节归导出规则管）；
+      // 目录 mtime 兜底保证正在下载、刚缓存的漫画不会被当成旧缓存
+      let activeAt = 0;
+      for (let m of list) {
+        if (m.downloadedAt > 0) continue;
+        let at = Math.max(reads.get(m.photoId) ?? 0, this.dirModifiedAt(this.ctxOfMeta(m)));
+        if (at > activeAt) activeAt = at;
+      }
+      let readExpired = rule.readCacheDays > 0 && activeAt > 0
+        && now - activeAt > rule.readCacheDays * day;
+      let exportedExpired = exportedAt > 0 && rule.exportedDays > 0
+        && now - exportedAt > rule.exportedDays * day;
       for (let m of list) {
         if (m.downloadedAt === 0) {
-          if (rule.readCacheDays <= 0) continue;
-          // 没有阅读记录时用目录最后写入时间兜底：正在下载或刚缓存的章节不算旧缓存
-          let last = Math.max(reads.get(m.photoId) ?? 0, this.dirModifiedAt(this.ctxOfMeta(m)));
-          if (now - last > rule.readCacheDays * day) toRemove.push(m);
-        } else if (exportedAt > 0 && rule.exportedDays > 0
-          && now - exportedAt > rule.exportedDays * day) {
+          if (readExpired) toRemove.push(m);
+        } else if (exportedExpired) {
           toRemove.push(m);
         }
       }

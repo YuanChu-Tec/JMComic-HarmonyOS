@@ -93,10 +93,9 @@ struct SectionMorePage {
       return;
     }
     if (hasLocal) {
-      // 过期：更多页作废，从第 0 页重拉（源列表分区的数据保留在首页 feed 里）
-      this.isLoading = true;
+      // 过期：更多页作废，从第 0 页重拉（源列表分区的数据保留在首页 feed 里）；
+      // 不清 albums、不置 isLoading：旧内容留到新数据落库后替换
       await AlbumDao.clearFeedPrefix(this.morePrefix);
-      this.albums = [];
     }
     this.currentPage = 0;
     await this.loadAlbums();
@@ -104,7 +103,7 @@ struct SectionMorePage {
 
   /** 本地列表是否过期（间隔与开关都由设置页控制；更多页跟随首页） */
   private isStale(): boolean {
-    return Date.now() - this.localUpdatedAt > CacheManager.feedTtlMsOf(CacheManager.REFRESH_HOME);
+    return Date.now() - this.localUpdatedAt > CacheManager.feedTtlMs();
   }
 
   /** 从库里拼出整个列表：源列表分区（首屏）+ 已落库的更多页 */
@@ -168,7 +167,8 @@ struct SectionMorePage {
       return;
     }
     // 2. 本地缺失才走网络
-    this.isLoading = true;
+    // 首屏无内容 → 全屏加载态；翻页已有内容 → 只显示底部加载条
+    this.isLoading = page > 1 || this.albums.length === 0;
     this.loadFailed = false;
     try {
       let items: RespJmAlbumInfo[] = [];

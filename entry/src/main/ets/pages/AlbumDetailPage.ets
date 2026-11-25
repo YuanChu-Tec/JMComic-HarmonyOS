@@ -120,7 +120,7 @@ struct AlbumDetailPage {
       // 此时本地必然没有 related，补一次联网，不等 TTL 到期
       let relatedMissing = local !== null && local.fetchedAt === 0;
       if (!force && hasLocal && local !== null && !relatedMissing
-        && Date.now() - local.updatedAt <= CacheManager.feedTtlMsOf(CacheManager.REFRESH_DETAIL)) {
+        && Date.now() - local.updatedAt <= CacheManager.feedTtlMs()) {
         return;
       }
       // 2. 本地缺失（或过期）才走网络
