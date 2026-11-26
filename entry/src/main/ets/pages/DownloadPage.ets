@@ -5,8 +5,9 @@ import { ApiService } from '../network/ApiService';
 import { DownloadTask, DownloadStatus } from '../models/Album';
 import { ZipExporter, AlbumExportRef } from '../common/ZipExporter';
 import { CacheManager } from '../common/CacheManager';
+import { HAIRLINE_BORDER } from '../common/UiEffects';
 
-/** 下载列表按专辑分组（专辑按最近添加时间倒序） */
+/** 下载列表按专辑分组（专辑按状态档位排序：待导出>下载中>等待下载>下载失败>已导出，同档内最近添加倒序） */
 interface AlbumGroup {
   albumId: number;
   albumName: string;
@@ -83,7 +84,14 @@ struct DownloadPage {
       g.totalPages += t.totalImages;
     }
     let list: AlbumGroup[] = Array.from(map.values());
+    // 排序口径（2026-11-26）：待导出 > 下载中 > 等待下载 > 下载失败 > 已导出；
+    // 同档内按最近添加时间倒序
     list.sort((a: AlbumGroup, b: AlbumGroup): number => {
+      let ra = this.groupStatusRank(a);
+      let rb = this.groupStatusRank(b);
+      if (ra !== rb) {
+        return ra - rb;
+      }
       let ta = a.tasks.length > 0 ? a.tasks[a.tasks.length - 1].addTime : 0;
       let tb = b.tasks.length > 0 ? b.tasks[b.tasks.length - 1].addTime : 0;
       return tb - ta;
@@ -119,28 +127,46 @@ struct DownloadPage {
     return this.groupDoneCount(g) > 0;
   }
 
-  /** 统计行第三段：全部完成时突出导出状态，进行中给下载状态 */
-  private groupStatusText(g: AlbumGroup): string {
+  /**
+   * 专辑级状态归类（与排序档位一一对应）：
+   * 0 待导出（全部完成未导出）/ 1 下载中 / 2 等待下载（排队或暂停，重启恢复的任务也在此）
+   * / 3 下载失败 / 4 已导出。判定顺序即优先级：活跃态 > 暂停态 > 失败态 > 终态。
+   */
+  private groupStatusRank(g: AlbumGroup): number {
     let hasError = false;
-    let hasActive = false;
-    let hasPaused = false;
+    let hasWaiting = false;
+    let allDone = true;
     for (let t of g.tasks) {
+      if (t.status === DownloadStatus.DOWNLOADING) return 1;
+      if (t.status === DownloadStatus.QUEUED || t.status === DownloadStatus.PAUSED) hasWaiting = true;
       if (t.status === DownloadStatus.ERROR) hasError = true;
-      if (t.status === DownloadStatus.DOWNLOADING || t.status === DownloadStatus.QUEUED) hasActive = true;
-      if (t.status === DownloadStatus.PAUSED) hasPaused = true;
+      if (t.status !== DownloadStatus.DONE) allDone = false;
     }
-    if (hasError) return '有章节失败';
-    if (hasActive) return '下载中';
-    if (hasPaused) return '已暂停';
-    return g.exported ? '已导出' : '未导出';
+    if (hasWaiting) return 2;
+    if (hasError) return 3;
+    if (allDone) return g.exported ? 4 : 0;
+    return 3;
+  }
+
+  /** 统计行第三段状态文案：五档归类文案（待导出/下载中/等待下载/下载失败/已导出） */
+  private groupStatusText(g: AlbumGroup): string {
+    switch (this.groupStatusRank(g)) {
+      case 0: return '待导出';
+      case 1: return '下载中';
+      case 2: return '等待下载';
+      case 3: return '下载失败';
+      default: return '已导出';
+    }
   }
 
   private groupStatusColor(g: AlbumGroup): Resource {
-    let hasError = false;
-    for (let t of g.tasks) {
-      if (t.status === DownloadStatus.ERROR) hasError = true;
+    switch (this.groupStatusRank(g)) {
+      case 0: return $r('app.color.status_done');
+      case 1: return $r('app.color.status_downloading');
+      case 2: return $r('app.color.status_wait');
+      case 3: return $r('app.color.brand');
+      default: return $r('app.color.text_tertiary');
     }
-    return hasError ? $r('app.color.brand') : $r('app.color.text_tertiary');
   }
 
   private notExportedCount(): number {
@@ -351,6 +377,9 @@ struct DownloadPage {
           }
           .width(40)
           .height(40)
+          .borderRadius(20)
+          .backgroundColor($r('app.color.overlay_bg'))
+          .border(HAIRLINE_BORDER)
           .onClick(() => this.onBack())
 
           Text('下载管理')
@@ -441,7 +470,9 @@ struct DownloadPage {
               `${group.albumId}|${this.expandedAlbumId === group.albumId ? 1 : 0}` +
               `|${this.manageMode ? 1 : 0}|${this.selectedIds.has(String(group.albumId)) ? 1 : 0}` +
               `|${this.groupDoneCount(group)}|${group.tasks.length}|${group.totalPages}|${group.exported ? 1 : 0}` +
-              `|${this.exportingAlbumId === group.albumId ? 1 : 0}`)
+              `|${this.exportingAlbumId === group.albumId ? 1 : 0}` +
+              // 状态档位入 key：章节排队→下载中这类不改变计数的状态迁移也要触发卡片重渲染
+              `|${this.groupStatusRank(group)}`)
           }
           .width('100%')
           .layoutWeight(1)
