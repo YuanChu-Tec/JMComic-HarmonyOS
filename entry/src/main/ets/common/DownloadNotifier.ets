@@ -1,14 +1,34 @@
 import { common, wantAgent } from '@kit.AbilityKit';
 import { notificationManager } from '@kit.NotificationKit';
 
+/** 全局下载汇总进度快照（DownloadService 构建传入），实况通知内容来源 */
+export interface DownloadAggregateStats {
+  /** 队列内章节总数（含排队/下载中/暂停/失败/已完成） */
+  totalChapters: number;
+  /** 已完成章节数 */
+  doneChapters: number;
+  /** 全部章节图片总数 */
+  totalImages: number;
+  /** 已落盘图片总数 */
+  doneImages: number;
+  /** 当前正在下载的章节名 */
+  currentChapter: string;
+}
+
 /**
  * 下载系统通知（静默形态：仅通知栏展示，不弹窗打断，点击回到应用）
- * 自 AlbumDetailPage 旧实现迁移；进度通知按最低间隔节流，避免逐图刷新
+ *
+ * 后台下载口径（2026-11-26）：DownloadService 申请长时任务（DATA_TRANSFER）成功后，
+ * 系统代建实况（Live View）通知——三方不能自建实况，只能用返回的同一通知 ID 发布更新
+ * 刷新进度；无长时任务时按专辑 ID 发普通进度通知兜底（旧行为）。
+ * 进度更新按最低间隔节流，避免逐图刷新。
  */
 export class DownloadNotifier {
   private static wantAgentObj: object | null = null;
   private static lastProgressTick: number = 0;
   private static readonly THROTTLE_MS = 1000;
+  /** 长时任务实况通知 ID（申请成功后写入；<0 表示无实况任务，进度走普通通知兜底） */
+  static liveNotificationId: number = -1;
 
   private static async ensureWantAgent(): Promise<object | null> {
     if (DownloadNotifier.wantAgentObj) {
@@ -21,9 +41,10 @@ export class DownloadNotifier {
           bundleName: context.abilityInfo.bundleName,
           abilityName: context.abilityInfo.name
         }],
-        operationType: wantAgent.OperationType.START_ABILITY,
+        // actionType/actionFlags 为现行字段名（operationType/wantAgentFlags 已废弃）
+        actionType: wantAgent.OperationType.START_ABILITY,
         requestCode: 0,
-        wantAgentFlags: [wantAgent.WantAgentFlags.CONSTANT_FLAG]
+        actionFlags: [wantAgent.WantAgentFlags.CONSTANT_FLAG]
       };
       DownloadNotifier.wantAgentObj = await wantAgent.getWantAgent(info);
     } catch (e) {
@@ -32,7 +53,7 @@ export class DownloadNotifier {
     return DownloadNotifier.wantAgentObj;
   }
 
-  /** 通知 id：按专辑隔离，同一专辑的进度/完成通知互相覆盖 */
+  /** 普通通知 id：按专辑隔离，同一专辑的进度/完成通知互相覆盖 */
   private static id(albumId: number): number {
     return 200000 + albumId;
   }
@@ -50,34 +71,34 @@ export class DownloadNotifier {
     }
   }
 
-  /** 章节下载进度通知（模板进度条），按最低间隔节流 */
-  static notifyProgress(albumId: number, albumName: string, chapterName: string,
-    current: number, total: number): void {
+  /** 全局汇总进度（实况/普通通知自动二选一），按最低间隔节流 */
+  static notifyAggregateProgress(albumId: number, albumName: string, stats: DownloadAggregateStats): void {
     let now = Date.now();
     if (now - DownloadNotifier.lastProgressTick < DownloadNotifier.THROTTLE_MS) {
       return;
     }
     DownloadNotifier.lastProgressTick = now;
-    let percent = total > 0 ? Math.round(current / total * 100) : 0;
+    let percent = stats.totalImages > 0 ? Math.round(stats.doneImages / stats.totalImages * 100) : 0;
+    let useLive = DownloadNotifier.liveNotificationId >= 0;
     try {
       let template: notificationManager.NotificationTemplate = {
         name: 'downloadTemplate',
         data: {
-          progressValue: current,
-          progressMaxValue: total,
+          progressValue: stats.doneImages,
+          progressMaxValue: Math.max(stats.totalImages, 1),
           isProgressIndeterminate: false
         }
       };
       let req: notificationManager.NotificationRequest = {
-        id: DownloadNotifier.id(albumId),
+        id: useLive ? DownloadNotifier.liveNotificationId : DownloadNotifier.id(albumId),
         notificationSlotType: notificationManager.SlotType.CONTENT_INFORMATION,
         template: template,
         content: {
           notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
           normal: {
             title: `正在下载：${albumName}`,
-            text: chapterName,
-            additionalText: `${percent}% (${current}/${total})`
+            text: `已完成 ${stats.doneChapters}/${stats.totalChapters} 章 · ${percent}%`,
+            additionalText: stats.currentChapter
           }
         }
       };
@@ -87,7 +108,7 @@ export class DownloadNotifier {
     }
   }
 
-  /** 专辑全部章节下载完成通知 */
+  /** 专辑全部章节下载完成通知（独立于实况通知 ID，不被进度刷新覆盖） */
   static notifyAlbumDone(albumId: number, albumName: string, totalChapters: number): void {
     try {
       let req: notificationManager.NotificationRequest = {

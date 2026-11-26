@@ -1,6 +1,8 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { image } from '@kit.ImageKit';
-import { common } from '@kit.AbilityKit';
+import { common, wantAgent } from '@kit.AbilityKit';
+import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
+import { notificationManager } from '@kit.NotificationKit';
 import { UIContext } from '@kit.ArkUI';
 import { ApiService } from './ApiService';
 import { HttpClient } from './HttpClient';
@@ -15,7 +17,7 @@ import { APP_HEADERS_IMAGE } from '../common/Constants';
 import { CacheManager } from '../common/CacheManager';
 import { DecodedImageCache } from '../common/DecodedImageCache';
 import { ImageDecodeUtils } from '../common/ImageDecodeUtils';
-import { DownloadNotifier } from '../common/DownloadNotifier';
+import { DownloadNotifier, DownloadAggregateStats } from '../common/DownloadNotifier';
 
 /** 加入下载队列的章节描述（详情页构建） */
 export interface ChapterDownloadInfo {
@@ -50,6 +52,13 @@ export class DownloadService {
   private cache: CacheManager | null = null;
   private baseDir: string = '';
   private decodedCache: DecodedImageCache | null = null;
+  // ── 后台长时任务（DATA_TRANSFER + 实况通知）状态 ──
+  /** 连续任务 ID（startBackgroundRunning 返回；<0 表示未申请） */
+  private bgTaskId: number = -1;
+  private bgStarting: boolean = false;
+  /** 用户划掉实况通知触发 continuousTaskCancel 后置位：同步暂停全部任务，恢复下载时复位 */
+  private bgUserCancelled: boolean = false;
+  private cancelListenerRegistered: boolean = false;
 
   private constructor() {
   }
@@ -242,6 +251,10 @@ export class DownloadService {
     if (this.running) return;
     this.running = true;
 
+    // 下载开始即申请长时任务：官方推荐「退后台前申请」（onBackground），但申请涉及通知授权弹窗
+    // 等异步流程，退后台瞬间才申请有竞态，下载开始即申请最稳；失败降级为仅前台下载
+    await this.ensureBackgroundRunning();
+
     try {
       while (this.hasPendingTasks()) {
         let task = this.getNextQueuedTask();
@@ -269,14 +282,142 @@ export class DownloadService {
             DownloadNotifier.notifyTaskError(task.albumId, task.albumName, task.chapterName, task.errorMsg);
           }
         }
-
-        if ((task.status as string) === (DownloadStatus.PAUSED as string)) {
-          break;
-        }
+        // 注意：单个章节被暂停/删除后不再 break——继续处理其余排队章节。
+        // 旧实现在此 break，暂停/删除正在下载的章节会让整个队列停摆，
+        // 表现为「通知写着下载中，实际没有在下」（2026-11-26 修复）
       }
     } finally {
       this.running = false;
+      // 队列排空立即释放长时任务，实况通知随之撤销
+      if (!this.hasPendingTasks()) {
+        this.stopBackgroundTask();
+      }
     }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  // 后台长时任务（DATA_TRANSFER）+ 实况进度通知
+  // 硬约束（SDK 声明实证，2026-11-26）：三方不能自建实况通知，只能申请长时任务由系统代建，
+  // 之后用返回的同一通知 ID 发布更新刷新进度；用户划掉实况通知会连带取消长时任务。
+  // ═══════════════════════════════════════════════════════
+
+  /** 申请长时任务（幂等）：申请成功后系统代建实况通知，进度经 DownloadNotifier 同 ID 更新 */
+  private async ensureBackgroundRunning(): Promise<void> {
+    if (this.bgTaskId >= 0 || this.bgStarting) return;
+    this.bgUserCancelled = false;
+    this.bgStarting = true;
+    try {
+      let context = getContext() as common.UIAbilityContext;
+      // 通知授权：首次下载弹系统授权框；拒绝后发布静默失败，不影响下载本身
+      try {
+        let enabled = await notificationManager.isNotificationEnabled();
+        if (!enabled) {
+          await notificationManager.requestEnableNotification(context);
+        }
+      } catch (e) {
+        console.warn('[DownloadService] request notification enable failed: ' + JSON.stringify(e));
+      }
+
+      let info: wantAgent.WantAgentInfo = {
+        wants: [{
+          bundleName: context.abilityInfo.bundleName,
+          abilityName: context.abilityInfo.name
+        }],
+        actionType: wantAgent.OperationType.START_ABILITY,
+        requestCode: 0,
+        actionFlags: [wantAgent.WantAgentFlags.CONSTANT_FLAG]
+      };
+      let agent = await wantAgent.getWantAgent(info);
+      // 返回对象带 slotType/contentType/notificationId/continuousTaskId，是实况进度更新的键
+      let taskNotification: backgroundTaskManager.ContinuousTaskNotification =
+        await backgroundTaskManager.startBackgroundRunning(context, ['dataTransfer'], agent);
+      this.bgTaskId = taskNotification.continuousTaskId ?? -1;
+      DownloadNotifier.liveNotificationId = taskNotification.notificationId;
+      this.registerCancelListener();
+      console.info(`[DownloadService] background running started, notificationId=${taskNotification.notificationId}`);
+    } catch (e) {
+      console.warn('[DownloadService] start background running failed: ' + JSON.stringify(e));
+    } finally {
+      this.bgStarting = false;
+    }
+  }
+
+  /** 监听长时任务被取消（用户划掉实况通知）：同步暂停全部任务，避免「通知已撤、下载照跑」 */
+  private registerCancelListener(): void {
+    if (this.cancelListenerRegistered) return;
+    this.cancelListenerRegistered = true;
+    try {
+      backgroundTaskManager.on('continuousTaskCancel', (info: backgroundTaskManager.ContinuousTaskCancelInfo) => {
+        if (DownloadNotifier.liveNotificationId < 0) {
+          return; // 本应用当前没有在册的长时任务，忽略（防御其他场景的事件）
+        }
+        console.info('[DownloadService] continuous task canceled by user: ' + JSON.stringify(info));
+        this.bgTaskId = -1;
+        DownloadNotifier.liveNotificationId = -1;
+        this.bgUserCancelled = true;
+        this.pauseAllForTaskCancel();
+      });
+    } catch (e) {
+      this.cancelListenerRegistered = false;
+      console.warn('[DownloadService] register cancel listener failed: ' + JSON.stringify(e));
+    }
+  }
+
+  /** 用户取消后台任务后的状态同步：全部非终态任务置暂停，可从下载管理页手动继续 */
+  private pauseAllForTaskCancel(): void {
+    let changed = false;
+    this.tasks.forEach((task: DownloadTask) => {
+      if (task.status === DownloadStatus.DOWNLOADING || task.status === DownloadStatus.QUEUED) {
+        task.status = DownloadStatus.PAUSED;
+        changed = true;
+      }
+    });
+    if (changed) {
+      this.notifyUpdate();
+    }
+  }
+
+  /** 释放长时任务（队列排空时调用）；实况通知随任务撤销 */
+  private stopBackgroundTask(): void {
+    if (this.bgTaskId < 0 && DownloadNotifier.liveNotificationId < 0) return;
+    let taskId = this.bgTaskId;
+    this.bgTaskId = -1;
+    DownloadNotifier.liveNotificationId = -1;
+    let context = getContext() as common.UIAbilityContext;
+    try {
+      if (taskId >= 0) {
+        // 与 string[] 形式 startBackgroundRunning 配对的是带 continuousTaskId 的 stop（API 15+）
+        backgroundTaskManager.stopBackgroundRunning(context, taskId).catch((e: Error) => {
+          console.warn('[DownloadService] stop background running failed: ' + JSON.stringify(e));
+        });
+      } else {
+        backgroundTaskManager.stopBackgroundRunning(context).catch((e: Error) => {
+          console.warn('[DownloadService] stop background running failed: ' + JSON.stringify(e));
+        });
+      }
+    } catch (e) {
+      console.warn('[DownloadService] stop background running error: ' + JSON.stringify(e));
+    }
+  }
+
+  /** 构建全局汇总进度快照（以当前正在下载的章节为「当前章节」） */
+  private buildProgressStats(current: DownloadTask): DownloadAggregateStats {
+    let stats: DownloadAggregateStats = {
+      totalChapters: 0,
+      doneChapters: 0,
+      totalImages: 0,
+      doneImages: 0,
+      currentChapter: current.chapterName
+    };
+    this.tasks.forEach((task: DownloadTask) => {
+      stats.totalChapters++;
+      if (task.status === DownloadStatus.DONE) {
+        stats.doneChapters++;
+      }
+      stats.totalImages += task.totalImages;
+      stats.doneImages += task.completedImages;
+    });
+    return stats;
   }
 
   /** 实际执行下载一个章节的所有图片（失败时抛出，由队列标记 ERROR） */
@@ -322,8 +463,9 @@ export class DownloadService {
         await this.downloadImage(task.photoId, i, scrambleId, img, destPath);
         task.completedImages = i + 1;
         this.notifyUpdate();
-        DownloadNotifier.notifyProgress(task.albumId, task.albumName, task.chapterName,
-          task.completedImages, task.totalImages);
+        // 实况/普通进度通知：内容为全局汇总（x/y 章 · n/m 页 · 百分比），节流在通知器内部
+        DownloadNotifier.notifyAggregateProgress(task.albumId, task.albumName,
+          this.buildProgressStats(task));
       } catch (err) {
         console.error(`[DownloadService] image failed: ${img.img_name}, ${(err as Error).message}`);
         // 单张失败不中断整体，继续下一张
