@@ -1,6 +1,7 @@
 import { ApiService } from '../network/ApiService';
 import { AccountManager, SavedAccount } from '../common/AccountManager';
 import { navPop, navPush } from '../common/NavHelper';
+import { HAIRLINE_BORDER } from '../common/UiEffects';
 
 /**
  * 账号管理页面
@@ -119,7 +120,9 @@ struct AccountManagePage {
               .fontSize(22)
               .fontColor([$r('app.color.text_primary')])
           }
-          .backgroundColor(Color.Transparent)
+          .backgroundColor($r('app.color.overlay_bg'))
+          .borderRadius(18)
+          .border(HAIRLINE_BORDER)
           .width(36)
           .height(36)
           .onClick(() => navPop())

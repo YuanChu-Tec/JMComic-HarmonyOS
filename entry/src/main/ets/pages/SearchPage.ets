@@ -4,6 +4,7 @@ import { AlbumViewModel, JmAlbumInfo, IAlbumViewModelJSON } from '../models/Albu
 import { CacheManager } from '../common/CacheManager';
 import { navPush, navPop } from '../common/NavHelper';
 import { AlbumDetailParams } from '../common/RouteParams';
+import { HAIRLINE_BORDER } from '../common/UiEffects';
 
 @Component
 struct SearchPage {
@@ -354,7 +355,8 @@ struct SearchPage {
 
       // ── 搜索栏（浮层 + 毛玻璃） ──
       Row() {
-        // 返回：40×40 标准点击体（裸 SymbolGlyph 字形宽仅约 13vp，不达 24vp 规范）
+        // 返回：40×40 标准点击体（裸 SymbolGlyph 字形宽仅约 13vp，不达 24vp 规范；
+        // 玻璃圆底 + 发丝描边提供可视化边缘）
         Stack() {
           SymbolGlyph($r('sys.symbol.chevron_left'))
             .fontSize(24)
@@ -362,6 +364,9 @@ struct SearchPage {
         }
         .width(40)
         .height(40)
+        .borderRadius(20)
+        .backgroundColor($r('app.color.overlay_bg'))
+        .border(HAIRLINE_BORDER)
         .onClick(() => this.onBack())
 
         Stack({ alignContent: Alignment.End }) {

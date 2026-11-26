@@ -3,6 +3,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import { ThemeSetting } from '../common/ThemeSetting';
 import { CacheManager } from '../common/CacheManager';
 import { navPop } from '../common/NavHelper';
+import { HAIRLINE_BORDER } from '../common/UiEffects';
 
 /**
  * 设置页面
@@ -152,7 +153,9 @@ struct SettingsPage {
               .fontSize(22)
               .fontColor([$r('app.color.text_primary')])
           }
-          .backgroundColor(Color.Transparent)
+          .backgroundColor($r('app.color.overlay_bg'))
+          .borderRadius(18)
+          .border(HAIRLINE_BORDER)
           .width(36)
           .height(36)
           .onClick(() => this.onBack())

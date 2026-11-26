@@ -10,6 +10,7 @@ import { SECTION_SOURCE_LATEST, SECTION_SOURCE_PROMOTE } from '../common/Constan
 import { navPop } from '../common/NavHelper';
 // 参数形状复用中央定义（原本地 interface SectionMorePageParams）
 import { SectionMoreParams } from '../common/RouteParams';
+import { HAIRLINE_BORDER } from '../common/UiEffects';
 
 const MORE_TAG: string = 'SectionMore';
 
@@ -329,6 +330,9 @@ struct SectionMorePage {
         }
         .width(40)
         .height(40)
+        .borderRadius(20)
+        .backgroundColor($r('app.color.overlay_bg'))
+        .border(HAIRLINE_BORDER)
         .onClick(() => this.onBack())
 
         Text(this.sectionTitle)

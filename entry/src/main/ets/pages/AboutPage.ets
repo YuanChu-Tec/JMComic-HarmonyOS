@@ -3,6 +3,7 @@ import { common, Want } from '@kit.AbilityKit';
 import { ApiService } from '../network/ApiService';
 import { UpdateManager, RELEASES_PAGE_URL } from '../common/UpdateManager';
 import { navPop } from '../common/NavHelper';
+import { HAIRLINE_BORDER } from '../common/UiEffects';
 
 /**
  * 防失联页面 — 展示官方及开发者联系方式
@@ -30,7 +31,9 @@ struct AboutPage {
             .fontSize(22)
             .fontColor([$r('app.color.text_primary')])
         }
-        .backgroundColor(Color.Transparent)
+        .backgroundColor($r('app.color.overlay_bg'))
+        .borderRadius(18)
+        .border(HAIRLINE_BORDER)
         .width(36)
         .height(36)
         .onClick(() => navPop())
