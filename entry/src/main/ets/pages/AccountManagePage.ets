@@ -262,7 +262,7 @@ struct AccountManagePage {
             .onClick(() => this.onLogoutClick())
           }
           .width('100%')
-          .padding({ left: 16, right: 16 })
+          .padding({ left: 16, right: 16, top: 8 })
         }
         .width('100%')
         .layoutWeight(1)
