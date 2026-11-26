@@ -11,6 +11,10 @@
     {
       "name": "EntryAbility_label",
       "value": "JMComic"
+    },
+    {
+      "name": "permission_reason_DETECT_GESTURE",
+      "value": "给悬浮按钮添加适人握持"
     }
   ]
 }

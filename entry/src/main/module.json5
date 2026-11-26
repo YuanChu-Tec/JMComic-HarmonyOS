@@ -22,6 +22,13 @@
       },
       {
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"
+      },
+      {
+        "name": "ohos.permission.DETECT_GESTURE",
+        "reason": "$string:permission_reason_DETECT_GESTURE",
+        "usedScene": {
+          "when": "inuse"
+        }
       }
     ],
     "abilities": [

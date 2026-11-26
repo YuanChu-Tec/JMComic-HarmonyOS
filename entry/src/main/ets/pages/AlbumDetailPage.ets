@@ -18,6 +18,7 @@ import {
 } from '../models/Album';
 import { navPush, navPop, navReplace } from '../common/NavHelper';
 import { AlbumDetailParams, ImageViewerParams, SearchPageParams, CommentPageParams } from '../common/RouteParams';
+import { HAIRLINE_BORDER } from '../common/UiEffects';
 
 interface SeriesItem {
   id: number;
@@ -45,6 +46,8 @@ struct AlbumDetailPage {
   @State hasRead: boolean = false;
   /** 首次使用下载功能时的引导半模态 */
   @State showDownloadGuideSheet: boolean = false;
+  // 智感握姿按钮落位（Index 全局策略层唯一写入：0=右下默认位，2=左下），本页只读消费
+  @StorageLink('gripBtnPos') btnPos: number = 0;
   private lastReadChapterId: string = '';
   private albumId: number = 0;
   private apiService: ApiService = ApiService.getInstance();
@@ -178,11 +181,7 @@ struct AlbumDetailPage {
   async onToggleFavorite(): Promise<void> {
     if (this.favLoading) return;
     if (!this.apiService.isLoggedIn()) {
-      try {
-        this.showToast('请先登录后再收藏');
-      } catch (e) {
-        console.error('[AlbumDetailPage] showToast error:', JSON.stringify(e));
-      }
+      this.showToast('请先登录后再收藏');
       return;
     }
     this.favLoading = true;
@@ -190,11 +189,26 @@ struct AlbumDetailPage {
       let result = await this.apiService.toggleFavorite(this.albumId.toString());
       if (result.status === 'ok') {
         this.isFavorited = !this.isFavorited;
+        this.showToast(this.isFavorited ? '已加入收藏' : '已取消收藏');
+      } else {
+        this.showToast('收藏操作失败，请重试');
       }
     } catch (err) {
       console.error('[AlbumDetailPage] toggleFavorite error:', JSON.stringify(err));
+      this.showToast('收藏操作失败，请重试');
     } finally {
       this.favLoading = false;
+    }
+  }
+
+  /** 阅读入口：优先续读上次章节（内容区「开始阅读」按钮与握姿胶囊共用） */
+  private readCurrentChapter(): void {
+    if (this.chapters.length === 0) return;
+    if (this.hasRead && this.lastReadChapterId) {
+      let idx = this.chapters.findIndex(ch => ch.photoId === this.lastReadChapterId);
+      this.onChapterClick(this.chapters[idx >= 0 ? idx : 0]);
+    } else {
+      this.onChapterClick(this.chapters[0]);
     }
   }
 
@@ -356,6 +370,79 @@ struct AlbumDetailPage {
     .alignItems(HorizontalAlign.Start)
   }
 
+  /**
+   * 智感握姿侧边胶囊：收藏 + 下载 + 阅读（竖式三动作，阅读入口在最下方、离拇指最近）。
+   * 落位由根 Stack 的 alignContent 按握姿切换（Index 策略层写 gripBtnPos），换边弹簧动画
+   * 同样由 Index 统一驱动，本页零动画代码。材质说明：内容区不生效沉浸光感（官方约束，
+   * 见 UiEffects），玻璃感用「半透明雾底 + 毛玻璃 + 发丝描边 + 顶缘光泽」承担可视化边缘。
+   */
+  @Builder
+  gripCapsule() {
+    Column({ space: 4 }) {
+      Row() {
+        SymbolGlyph(this.isFavorited ? $r('sys.symbol.heart_fill') : $r('sys.symbol.heart'))
+          .fontSize(22)
+          .fontColor([this.isFavorited ? $r('app.color.brand') : $r('app.color.text_primary')])
+      }
+      .width(56)
+      .height(48)
+      .justifyContent(FlexAlign.Center)
+      .opacity(this.favLoading ? 0.5 : 1)
+      .onClick(() => this.onToggleFavorite())
+
+      Divider()
+        .strokeWidth(0.5)
+        .width(28)
+        .color($r('sys.color.comp_divider'))
+
+      Row() {
+        SymbolGlyph($r('sys.symbol.download'))
+          .fontSize(22)
+          .fontColor([$r('app.color.text_primary')])
+      }
+      .width(56)
+      .height(48)
+      .justifyContent(FlexAlign.Center)
+      .onClick(() => this.onDownload())
+
+      Divider()
+        .strokeWidth(0.5)
+        .width(28)
+        .color($r('sys.color.comp_divider'))
+
+      Row() {
+        SymbolGlyph($r('sys.symbol.book_badge_play'))
+          .fontSize(22)
+          .fontColor([$r('app.color.brand')])
+      }
+      .width(56)
+      .height(48)
+      .justifyContent(FlexAlign.Center)
+      .onClick(() => this.readCurrentChapter())
+    }
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: 4, bottom: 4 })
+    .width(60)
+    .borderRadius(30)
+    .backgroundBlurStyle(BlurStyle.Thin)
+    .backgroundColor($r('app.color.overlay_bg'))
+    // 「光在胶囊内」：顶缘 12% 白光泽渐隐，深色下提供内部层次、浅色下近隐形；
+    // 与发丝描边同为静态属性，换边移动时不会重建闪烁（参考项目真机结论）
+    .linearGradient({
+      angle: 180,
+      colors: [['#1FFFFFFF', 0], ['#00FFFFFF', 0.4]]
+    })
+    .border(HAIRLINE_BORDER)
+    // 吸收胶囊缝隙（分隔线/内边距）点击，防止穿透到下层误触
+    .onClick(() => {
+    })
+    // 贴边一侧向屏内收 12vp；y 上抬避开底部操作区与导航条
+    .offset({
+      x: this.btnPos === 0 ? -12 : 12,
+      y: -(this.bottomSafeHeight + 232)
+    })
+  }
+
   build() {
     NavDestination() {
     Stack() {
@@ -460,6 +547,9 @@ struct AlbumDetailPage {
                 .height(32)
                 .padding({ left: 16, right: 16 })
                 .margin({ top: 8 })
+                // 请求进行中禁点（防重复切换），配合 Toast 反馈（2026-11-26 收藏反馈口径）
+                .enabled(!this.favLoading)
+                .opacity(this.favLoading ? 0.6 : 1)
                 .onClick(() => this.onToggleFavorite())
               }
               .layoutWeight(1)
@@ -624,18 +714,7 @@ struct AlbumDetailPage {
                   .fontColor($r('app.color.text_on_accent'))
                   .backgroundColor($r('app.color.brand'))
                   .borderRadius(24)
-                  .onClick(() => {
-                    if (this.hasRead && this.lastReadChapterId) {
-                      let idx = this.chapters.findIndex(ch => ch.photoId === this.lastReadChapterId);
-                      if (idx >= 0) {
-                        this.onChapterClick(this.chapters[idx]);
-                      } else {
-                        this.onChapterClick(this.chapters[0]);
-                      }
-                    } else {
-                      this.onChapterClick(this.chapters[0]);
-                    }
-                  })
+                  .onClick(() => this.readCurrentChapter())
 
                 Button('评论')
                   .height(48)
@@ -809,7 +888,8 @@ struct AlbumDetailPage {
 
       // ── 沉浸式顶部导航栏（毛玻璃浮层） ──
       Row() {
-        // 左：返回按钮（40×40 标准点击体：裸 SymbolGlyph 字形有效宽度仅约 13~24vp，不达 24vp 规范）
+        // 左：返回按钮（40×40 标准点击体：裸 SymbolGlyph 字形有效宽度仅约 13~24vp，不达 24vp 规范；
+        // 玻璃圆底 + 发丝描边提供可视化边缘——内容区不生效沉浸光感材质，裸图标曾无可视边界）
         Stack() {
           SymbolGlyph($r('sys.symbol.chevron_left'))
             .fontSize(24)
@@ -817,6 +897,9 @@ struct AlbumDetailPage {
         }
         .width(40)
         .height(40)
+        .borderRadius(20)
+        .backgroundColor($r('app.color.overlay_bg'))
+        .border(HAIRLINE_BORDER)
         .onClick(() => this.onBack())
 
         Blank()
@@ -829,6 +912,9 @@ struct AlbumDetailPage {
         }
         .width(40)
         .height(40)
+        .borderRadius(20)
+        .backgroundColor($r('app.color.overlay_bg'))
+        .border(HAIRLINE_BORDER)
         .onClick(() => this.onShare())
       }
       .position({ x: 0, y: 0 })
@@ -837,6 +923,19 @@ struct AlbumDetailPage {
       .backgroundColor($r('app.color.header_bg'))
       .backdropBlur(20)
       .zIndex(10)
+
+      // ── 智感握姿侧边胶囊：全屏 Stack 承载落位，换边随握姿（右手/未握持停右下，左手换左下） ──
+      if (this.album) {
+        Stack() {
+          this.gripCapsule()
+        }
+        .width('100%')
+        .height('100%')
+        .alignContent(this.btnPos === 0 ? Alignment.BottomEnd : Alignment.BottomStart)
+        // 包装层 Transparent 不拦截空白区点击，滚动/卡片交互不受影响
+        .hitTestBehavior(HitTestMode.Transparent)
+        .zIndex(5)
+      }
     }
     .width('100%')
     .height('100%')

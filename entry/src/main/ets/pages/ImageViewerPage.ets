@@ -1,11 +1,12 @@
 import { image } from '@kit.ImageKit';
 import { http } from '@kit.NetworkKit';
 import { ApiService } from '../network/ApiService';
+import { DownloadService, ChapterDownloadInfo } from '../network/DownloadService';
 import { CacheManager } from '../common/CacheManager';
 import { ImageDecodeUtils } from '../common/ImageDecodeUtils';
 import { DecodedImageCache } from '../common/DecodedImageCache';
 import { APP_HEADERS_IMAGE } from '../common/Constants';
-import { JmImageInfo, PictureData } from '../models/Album';
+import { JmImageInfo, FavoriteAlbumItem, PictureData } from '../models/Album';
 import { navPop } from '../common/NavHelper';
 import { ImageViewerParams } from '../common/RouteParams';
 
@@ -65,6 +66,13 @@ struct ImageViewerPage {
   private zoomScale: number = 1.0;
   @StorageProp('topSafeHeight') topSafeHeight: number = 0;
   @StorageProp('bottomSafeHeight') bottomSafeHeight: number = 0;
+  @StorageProp('isLoggedIn') isLoggedIn: boolean = false;
+  // 智感握姿按钮落位（Index 全局策略层唯一写入：0=右下默认位，2=左下），本页只读消费
+  @StorageProp('gripBtnPos') btnPos: number = 0;
+  // 专辑收藏状态与请求锁：阅读页新增的收藏入口（与详情页同接口、同反馈口径）
+  @State isFavorited: boolean = false;
+  @State favLoading: boolean = false;
+  private favCheckedAlbumId: number = -1;
   private photoId: string = '';
   private scrambleId: number = 0;
   private albumId: number = 0;
@@ -117,8 +125,92 @@ struct ImageViewerPage {
         }
       }
       this.updateChapterButtons();
+      // 已登录时校验专辑收藏状态，供握姿胶囊收藏钮亮灭展示
+      if (this.isLoggedIn && this.albumId > 0) {
+        this.verifyFavorited();
+      }
     }
     this.loadImagesWithCache();
+  }
+
+  /** Toast 统一走 UIContext 形态（开发规范 §5.5，禁模块级 promptAction 直呼） */
+  private showToast(message: string, duration: number = 2000): void {
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: duration });
+  }
+
+  /**
+   * 校验专辑收藏状态：与详情页同口径——跳过详情API不可靠的 is_favorite，
+   * 直接查收藏列表第一页确认
+   */
+  private async verifyFavorited(): Promise<void> {
+    if (this.favCheckedAlbumId === this.albumId) return;
+    this.favCheckedAlbumId = this.albumId;
+    try {
+      let resp = await this.apiService.getFavorites(1, '0');
+      if (resp.code === 200 && resp.data && resp.data.list) {
+        let found = resp.data.list.some((item: FavoriteAlbumItem): boolean => {
+          return String(item.id) === String(this.albumId);
+        });
+        if (found) {
+          this.isFavorited = true;
+        }
+      }
+    } catch (err) {
+      console.error('[ImageViewer] verifyFavorited error:', JSON.stringify(err));
+    }
+  }
+
+  /** 切换专辑收藏（成功/失败均有 Toast 反馈；请求中防重复触发） */
+  private async onToggleFavorite(): Promise<void> {
+    if (this.favLoading) return;
+    if (!this.apiService.isLoggedIn()) {
+      this.showToast('请先登录后再收藏');
+      return;
+    }
+    this.favLoading = true;
+    try {
+      let result = await this.apiService.toggleFavorite(this.albumId.toString());
+      if (result.status === 'ok') {
+        this.isFavorited = !this.isFavorited;
+        this.showToast(this.isFavorited ? '已加入收藏' : '已取消收藏');
+      } else {
+        this.showToast('收藏操作失败，请重试');
+      }
+    } catch (err) {
+      console.error('[ImageViewer] toggleFavorite error:', JSON.stringify(err));
+      this.showToast('收藏操作失败，请重试');
+    } finally {
+      this.favLoading = false;
+    }
+  }
+
+  /**
+   * 握姿胶囊下载入口：整本所有章节加入下载队列（与详情页同管线；scrambleId 由
+   * 章节图片接口在下载时取真实值）。阅读中不打断——仅 Toast 反馈，不跳下载管理页。
+   */
+  private async onDownloadFromReader(): Promise<void> {
+    if (this.albumId <= 0) {
+      this.showToast('当前章节不支持整本下载');
+      return;
+    }
+    try {
+      let svc = await DownloadService.getInstance();
+      let source = this.chapters.length > 0
+        ? this.chapters
+        : [{ photoId: this.photoId, photoName: this.titleText } as ChapterInfo];
+      let chapterList: ChapterDownloadInfo[] = source.map((ch): ChapterDownloadInfo => {
+        return { photoId: ch.photoId, photoName: ch.photoName, scrambleId: 0 } as ChapterDownloadInfo;
+      });
+      let added = svc.addAlbumTasks(this.albumId, this.albumName || this.titleText, chapterList);
+      if (added === 0) {
+        this.showToast('全部章节已在下载队列中', 2500);
+      } else {
+        this.showToast(`已加入 ${added} 个章节到下载队列`, 2500);
+      }
+    } catch (e) {
+      console.error('[ImageViewer] download error:', JSON.stringify(e));
+      this.showToast('加入下载队列失败');
+    }
   }
 
   async loadImagesWithCache(): Promise<void> {
@@ -813,6 +905,70 @@ struct ImageViewerPage {
       .animation({ duration: 250, curve: Curve.EaseInOut }))
   }
 
+  /**
+   * 智感握姿章节胶囊：收藏 + 下载（竖式两动作）。落位由包装 Stack 的 alignContent 按握姿
+   * 切换（Index 策略层写 gripBtnPos），换边弹簧动画由 Index 统一驱动，此处零动画代码。
+   * 与工具栏同受 showControls 驱动，隐藏时热区一并移除；换边转场与工具栏同参数。
+   * 深色玻璃底 + 发丝描边 + 顶缘光泽（阅读页为深底，静态属性换边移动不重建闪烁）。
+   */
+  @Builder
+  private gripCapsule() {
+    Column({ space: 4 }) {
+      Row() {
+        SymbolGlyph(this.isFavorited ? $r('sys.symbol.heart_fill') : $r('sys.symbol.heart'))
+          .fontSize(22)
+          .fontColor([this.isFavorited ? '#FF5A5F' : '#FFFFFF'])
+      }
+      .width(56)
+      .height(48)
+      .justifyContent(FlexAlign.Center)
+      .opacity(this.favLoading ? 0.5 : 1)
+      .onClick(() => this.onToggleFavorite())
+
+      Divider()
+        .strokeWidth(0.5)
+        .width(28)
+        .color('#4DFFFFFF')
+
+      Row() {
+        SymbolGlyph($r('sys.symbol.download'))
+          .fontSize(22)
+          .fontColor(['#FFFFFF'])
+      }
+      .width(56)
+      .height(48)
+      .justifyContent(FlexAlign.Center)
+      .onClick(() => this.onDownloadFromReader())
+    }
+    .alignItems(HorizontalAlign.Center)
+    .padding({ top: 4, bottom: 4 })
+    .width(60)
+    .borderRadius(30)
+    .backgroundBlurStyle(BlurStyle.Thin)
+    .backgroundColor('#59000000')
+    // 吸收胶囊缝隙点击：不吸收会穿透到工具栏 Blank，误触收起
+    .onClick(() => {
+    })
+    // 「光在胶囊内」：顶缘白光泽渐隐 + 发丝描边，静态属性换边移动不重建闪烁
+    .linearGradient({
+      angle: 180,
+      colors: [['#1FFFFFFF', 0], ['#00FFFFFF', 0.4]]
+    })
+    .border({
+      width: 0.5,
+      color: '#33FFFFFF'
+    })
+    // 贴边一侧内收 12vp；y 上抬悬于底栏上方，离拇指最近
+    .offset({
+      x: this.btnPos === 0 ? -12 : 12,
+      y: -(this.bottomSafeHeight + 156)
+    })
+    // 与工具栏同参数转场：从贴边侧滑入/滑出
+    .transition(TransitionEffect.OPACITY
+      .combine(TransitionEffect.translate({ x: this.btnPos === 0 ? 96 : -96 }))
+      .animation({ duration: 250, curve: Curve.EaseInOut }))
+  }
+
   build() {
     NavDestination() {
     Stack({ alignContent: Alignment.TopStart }) {
@@ -977,6 +1133,16 @@ struct ImageViewerPage {
           .width('100%')
           .height('100%')
           .hitTestBehavior(HitTestMode.None)
+
+          // 智感握姿章节胶囊：与工具栏同受 showControls 驱动；包装层 Transparent
+          // 不拦截空白区点击，落到下层工具栏 Blank/画面走收起与翻页逻辑
+          Stack() {
+            this.gripCapsule()
+          }
+          .width('100%')
+          .height('100%')
+          .alignContent(this.btnPos === 0 ? Alignment.BottomEnd : Alignment.BottomStart)
+          .hitTestBehavior(HitTestMode.Transparent)
         }
       }
     }

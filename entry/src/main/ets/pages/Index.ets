@@ -1,4 +1,7 @@
-import { display, uiMaterial } from '@kit.ArkUI';
+import { display, uiMaterial, curves } from '@kit.ArkUI';
+import { motion } from '@kit.MultimodalAwarenessKit';
+import { HoldingHandleUtil } from '../common/HoldingHandleUtil';
+import { getLightMaterial, HAIRLINE_BORDER } from '../common/UiEffects';
 import { ApiService } from '../network/ApiService';
 import { AlbumViewModel, JmPromoteSection, SearchResultData, IAlbumViewModelJSON,
   CommentInfo, CommentPageData, parseCommentRaw,
@@ -34,6 +37,9 @@ interface ForumModeItem {
   key: string;
   label: string;
 }
+
+/** 智感握姿防抖：只有连续保持 500ms 的握持状态才触发按钮换边（参考项目同值） */
+const HOLDING_STABLE_MS = 500;
 
 // ═══════════════════════════════════════════
 // 首页 — 推荐分区横向滑动
@@ -1768,32 +1774,20 @@ struct Index {
   private pathStack: NavPathStack = new NavPathStack();
   private controller: HdsTabsController = new HdsTabsController();
   private apiService: ApiService = ApiService.getInstance();
-  // 顶部图标钮沉浸光感材质：API 26 uiMaterial.ImmersiveMaterial + 光感交互反馈；
-  // 模拟器/低版本/不支持设备回退纯色底（compatibleSdk 23，见 NOTICE 待办）
-  private lightMaterial: uiMaterial.ImmersiveMaterial | undefined = this.createLightMaterial();
-
-  private createLightMaterial(): uiMaterial.ImmersiveMaterial | undefined {
-    if (DeviceUtils.isEmulator()) {
-      return undefined;
-    }
-    try {
-      // 低版本运行时无此模块/接口，typeof 探测 + try/catch 双保险
-      if (typeof uiMaterial.isImmersiveMaterialSupported === 'function' && !uiMaterial.isImmersiveMaterialSupported()) {
-        return undefined;
-      }
-      return new uiMaterial.ImmersiveMaterial({
-        style: uiMaterial.ImmersiveStyle.REGULAR,
-        lightEffect: { color: Color.White }
-      });
-    } catch (e) {
-      console.warn('[Index] immersive material unsupported:', JSON.stringify(e));
-      return undefined;
-    }
-  }
+  // 沉浸光感材质（API 26，三重门控）：官方约束其仅在标题栏/底部 TabBar 生效，内容区不生效
+  // （UiEffects 内有说明）。此处保留挂载是「支持即启用」的口径；顶栏图标钮的可视化边缘
+  // 由玻璃底 + 发丝描边承担，材质不生效时不会退化为裸图标
+  private lightMaterial: uiMaterial.ImmersiveMaterial | undefined = getLightMaterial();
+  // 待生效的握姿换边定时器（-1 表示无）
+  private holdDebounceTimer: number = -1;
 
   async aboutToAppear(): Promise<void> {
     // 注册全局导航栈（须早于任何子组件的跳转调用）
     AppStorage.setOrCreate('navPathStack', this.pathStack);
+    // 智感握姿：订阅系统左右手握持事件（不支持的设备内部静默降级，按钮恒停默认右下）
+    HoldingHandleUtil.start((status: motion.HoldingHandStatus) => {
+      this.handleHoldingStatusChange(status);
+    });
     // 自动登录：多账号管理器取活跃账号的凭据
     try {
       let accountManager = AccountManager.getInstance();
@@ -1809,6 +1803,54 @@ struct Index {
     } catch (err) {
       console.warn('[Index] 自动登录失败:', JSON.stringify(err));
     }
+  }
+
+  aboutToDisappear(): void {
+    // 丢弃尚未生效的换边 + 停止握持订阅，防泄漏与销毁后误落位
+    if (this.holdDebounceTimer !== -1) {
+      clearTimeout(this.holdDebounceTimer);
+      this.holdDebounceTimer = -1;
+    }
+    HoldingHandleUtil.stop();
+  }
+
+  /**
+   * 智感握姿策略层（全局唯一写入点）：握持状态 → 按钮落位。
+   * 左手 → 2（左下），右手/未握持 → 0（右下默认位）；双手捧机最易误触发，保持原位不换边。
+   * 写 AppStorage 'gripBtnPos'，消费页面（详情页/阅读页握姿胶囊）经 @StorageLink/@StorageProp
+   * 自动响应刷新，换边弹簧动画包在状态赋值外层统一驱动，页面侧零动画代码。
+   */
+  private handleHoldingStatusChange(status: motion.HoldingHandStatus): void {
+    // 每个事件先取消未生效的换边：只有连续 HOLDING_STABLE_MS 保持不变的状态才落位
+    if (this.holdDebounceTimer !== -1) {
+      clearTimeout(this.holdDebounceTimer);
+      this.holdDebounceTimer = -1;
+    }
+    let target = 0;
+    switch (status) {
+      case motion.HoldingHandStatus.LEFT_HAND_HELD:
+        target = 2;
+        break;
+      case motion.HoldingHandStatus.BOTH_HANDS_HELD:
+        return;
+      case motion.HoldingHandStatus.RIGHT_HAND_HELD:
+      case motion.HoldingHandStatus.NOT_HELD:
+      default:
+        target = 0;
+        break;
+    }
+    if (target === (AppStorage.get<number>('gripBtnPos') ?? 0)) {
+      return;
+    }
+    this.holdDebounceTimer = setTimeout(() => {
+      this.holdDebounceTimer = -1;
+      if (target === (AppStorage.get<number>('gripBtnPos') ?? 0)) {
+        return;
+      }
+      this.getUIContext().animateTo({ duration: 350, curve: curves.springMotion() }, () => {
+        AppStorage.setOrCreate('gripBtnPos', target);
+      });
+    }, HOLDING_STABLE_MS);
   }
 
   onSearch(): void {
@@ -2021,7 +2063,8 @@ struct Index {
 
         Blank()
 
-        // 线路：40vp 光感圆形图标钮（纯 symbol，无文字）
+        // 线路：40vp 圆形图标钮（纯 symbol，无文字）。玻璃底 + 发丝描边保证可视化边缘：
+        // 官方约束沉浸光感材质仅在标题栏/TabBar 生效，内容区曾因材质不生效+透明底退化为裸图标
         Stack() {
           SymbolGlyph($r('sys.symbol.link'))
             .fontSize(22)
@@ -2030,7 +2073,8 @@ struct Index {
         .width(40)
         .height(40)
         .borderRadius(20)
-        .backgroundColor(this.lightMaterial ? Color.Transparent : $r('app.color.bg_page'))
+        .backgroundColor($r('app.color.overlay_bg'))
+        .border(HAIRLINE_BORDER)
         .systemMaterial(this.lightMaterial)
         .margin({ right: 8 })
         .onClick(() => this.onToggleRoute())
@@ -2041,7 +2085,7 @@ struct Index {
           preferType: SheetType.BOTTOM
         })
 
-        // 搜索：40vp 光感圆形图标钮（纯 symbol，无文字）
+        // 搜索：40vp 圆形图标钮（同上，玻璃边缘 + 光感材质挂载）
         Stack() {
           SymbolGlyph($r('sys.symbol.magnifyingglass'))
             .fontSize(22)
@@ -2050,7 +2094,8 @@ struct Index {
         .width(40)
         .height(40)
         .borderRadius(20)
-        .backgroundColor(this.lightMaterial ? Color.Transparent : $r('app.color.bg_page'))
+        .backgroundColor($r('app.color.overlay_bg'))
+        .border(HAIRLINE_BORDER)
         .systemMaterial(this.lightMaterial)
         .onClick(() => this.onSearch())
       }
