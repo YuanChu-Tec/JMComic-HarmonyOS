@@ -116,9 +116,18 @@ export class DownloadService {
    */
   addAlbumTasks(albumId: number, albumName: string, chapters: ChapterDownloadInfo[]): number {
     let added = 0;
+    // 本地下载目录已不存在（如导出后自动清理过）时，已完成任务重置为待下载，支持重新下载
+    let filesMissing = !fileIo.accessSync(this.getAlbumDir(albumId, albumName));
     for (let ch of chapters) {
       let taskId = `${albumId}_${ch.photoId}`;
-      if (this.tasks.has(taskId)) {
+      let existing = this.tasks.get(taskId);
+      if (existing) {
+        if (filesMissing && (existing.status as string) === (DownloadStatus.DONE as string)) {
+          existing.status = DownloadStatus.QUEUED;
+          existing.completedImages = 0;
+          existing.errorMsg = '';
+          added++;
+        }
         continue;
       }
       let task = new DownloadTask();
@@ -145,6 +154,7 @@ export class DownloadService {
   /** 删除整本漫画的下载任务与本地已下载文件（下载管理页专辑删除/管理态批量删除用） */
   deleteAlbumTasks(albumId: number, albumName: string): void {
     let ids: string[] = [];
+    let photoIds: string[] = [];
     this.tasks.forEach((task: DownloadTask) => {
       if (task.albumId === albumId) {
         // 正在下载的先置暂停，让执行循环在当前图片后停下
@@ -152,6 +162,7 @@ export class DownloadService {
           task.status = DownloadStatus.PAUSED;
         }
         ids.push(task.taskId);
+        photoIds.push(task.photoId);
       }
     });
     for (let id of ids) {
@@ -170,6 +181,10 @@ export class DownloadService {
     } catch (e) {
       console.warn(`[DownloadService] remove album dir failed: ${JSON.stringify(e)}`);
     }
+    // 连带清理解码缓存副本（cacheDir/decoded/{photoId}）
+    for (let pid of photoIds) {
+      this.decodedCache?.deleteChapterCache(pid);
+    }
   }
 
   /** 仅删除整本漫画的本地已下载文件，保留任务记录（「导出成功后自动删除下载缓存」设置开启时由导出流程调用） */
@@ -182,6 +197,13 @@ export class DownloadService {
     } catch (e) {
       console.warn(`[DownloadService] remove album files failed: ${JSON.stringify(e)}`);
     }
+    // 连带清理解码缓存副本（cacheDir/decoded/{photoId}）：下载时会回写第二份到缓存，
+    // 不清理的话「减少空间占用」只兑现了一半，且设置页缓存体积不会下降
+    this.tasks.forEach((task: DownloadTask) => {
+      if (task.albumId === albumId) {
+        this.decodedCache?.deleteChapterCache(task.photoId);
+      }
+    });
   }
 
   /** 暂停任务（当前正在下载的图片完成后停下，进度已持久化） */
@@ -368,7 +390,13 @@ export class DownloadService {
     // 4. PNG 落盘并回写解码缓存（后续阅读/重复下载免网络）
     await this.savePixelMapToFile(pixelMap, destPath);
     if (this.decodedCache) {
-      this.decodedCache.saveDecodedImage(photoId, index, pixelMap);
+      // 异步回写，编码完成后才释放 PixelMap——不等待就 release 会在编码中途撤走编码源，
+      // 高概率导致缓存回写失败（saveDecodedImage 内部已自捕获异常，这里仅兜底 + 释放）
+      this.decodedCache.saveDecodedImage(photoId, index, pixelMap)
+        .catch((_e: Error) => {
+        })
+        .finally(() => pixelMap.release());
+      return;
     }
     pixelMap.release();
   }
