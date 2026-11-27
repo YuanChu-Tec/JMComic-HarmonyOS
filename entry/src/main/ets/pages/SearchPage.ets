@@ -369,53 +369,36 @@ struct SearchPage {
         .border(HAIRLINE_BORDER)
         .onClick(() => this.onBack())
 
-        Stack({ alignContent: Alignment.End }) {
-          TextInput({ placeholder: '输入关键词搜索...', text: this.keyword })
-            .width('100%')
-            .height(40)
-            .fontSize(15)
-            .backgroundColor($r('app.color.bg_page'))
-            .borderRadius(20)
-            // 发丝描边提供可视化边缘：底色与页面背景近似，无描边时输入框边界不可辨
-            .border(HAIRLINE_BORDER)
-            .padding({ left: 16, right: 36 })
-            .onChange((value: string) => {
-              this.keyword = value;
-            })
-            .onSubmit(() => {
-              this.doSearch();
-            })
-
-          if (this.keyword.trim().length > 0) {
-            // 推荐写法：使用 SymbolGlyph（外套 40×40 标准点击体）
-            Stack() {
-              SymbolGlyph($r('sys.symbol.xmark_circle_fill'))
-                .fontSize(18)                 // 对应之前的 .width() .height()
-                .fontColor([$r('app.color.text_disabled')])       // 注意：fontColor 接收数组
-            }
-            .width(40)
-            .height(40)
-            .margin({ right: 4 })
-            .onClick(() => {
-                this.keyword = '';
-              })
-          }
-        }
-        .layoutWeight(1)
+        // 搜索框：系统 Search 组件（参考 PixLume 搜索页）——自带左侧搜索图标与
+        // 内建清除钮（有输入时出现），不必再自绘清除层
+        Search({ value: this.keyword, placeholder: '输入关键词搜索...' })
+          .height(40)
+          .textFont({ size: 15 })
+          .layoutWeight(1)
+          .backgroundColor($r('app.color.bg_page'))
+          .borderRadius(20)
+          // 发丝描边提供可视化边缘：底色与页面背景近似，无描边时输入框边界不可辨
+          .border(HAIRLINE_BORDER)
+          .placeholderColor($r('app.color.text_tertiary'))
+          .fontColor($r('app.color.text_primary'))
+          .onChange((value: string) => {
+            this.keyword = value;
+          })
+          .onSubmit(() => {
+            this.doSearch();
+          })
         .margin({ left: 12, right: 12 })
 
-        // 搜索：40×40 玻璃圆底点击体（与左侧返回钮成对，裸文字无容器时边界不可辨）
+        // 搜索：40×40 纯色圆底 + 白色 symbol（参考 PixLume 圆形图标钮语言，替代裸文字钮）
         Stack() {
-          Text('搜索')
-            .fontSize(15)
-            .fontColor($r('app.color.brand'))
-            .fontWeight(FontWeight.Medium)
+          SymbolGlyph($r('sys.symbol.magnifyingglass'))
+            .fontSize(20)
+            .fontColor([$r('app.color.text_on_accent')])
         }
         .width(40)
         .height(40)
         .borderRadius(20)
-        .backgroundColor($r('app.color.overlay_bg'))
-        .border(HAIRLINE_BORDER)
+        .backgroundColor($r('app.color.brand'))
         .onClick(() => this.doSearch())
       }
       .position({ x: 0, y: 0 })
