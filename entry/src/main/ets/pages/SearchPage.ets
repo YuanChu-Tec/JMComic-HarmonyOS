@@ -376,6 +376,8 @@ struct SearchPage {
             .fontSize(15)
             .backgroundColor($r('app.color.bg_page'))
             .borderRadius(20)
+            // 发丝描边提供可视化边缘：底色与页面背景近似，无描边时输入框边界不可辨
+            .border(HAIRLINE_BORDER)
             .padding({ left: 16, right: 36 })
             .onChange((value: string) => {
               this.keyword = value;
@@ -402,6 +404,7 @@ struct SearchPage {
         .layoutWeight(1)
         .margin({ left: 12, right: 12 })
 
+        // 搜索：40×40 玻璃圆底点击体（与左侧返回钮成对，裸文字无容器时边界不可辨）
         Stack() {
           Text('搜索')
             .fontSize(15)
@@ -410,6 +413,9 @@ struct SearchPage {
         }
         .width(40)
         .height(40)
+        .borderRadius(20)
+        .backgroundColor($r('app.color.overlay_bg'))
+        .border(HAIRLINE_BORDER)
         .onClick(() => this.doSearch())
       }
       .position({ x: 0, y: 0 })
