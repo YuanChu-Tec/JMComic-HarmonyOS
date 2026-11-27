@@ -148,7 +148,7 @@ struct SettingsPage {
       Column() {
         // ── 顶部栏 ──
         Row() {
-          Button({ type: ButtonType.Normal }) {
+          Stack() {
             SymbolGlyph($r('sys.symbol.chevron_left'))
               .fontSize(22)
               .fontColor([$r('app.color.text_primary')])
